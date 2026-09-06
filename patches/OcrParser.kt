@@ -16,91 +16,81 @@ object OcrParser {
         val cy: Int,
         val h: Int,
         val left: Int,
-        val right: Int
+        val right: Int,
+        val top: Int,
+        val bottom: Int
     )
 
     fun parse(result: Text): List<MatchCandidate> {
-        // Full OCR lines are used for team names so multi-word clubs remain intact.
         val lineTokens = result.textBlocks.flatMap { block ->
             block.lines.mapNotNull { line ->
                 val b = line.boundingBox ?: return@mapNotNull null
-                Token(normalize(line.text), b.centerX(), b.centerY(), b.height(), b.left, b.right)
+                Token(normalize(line.text), b.centerX(), b.centerY(), b.height(), b.left, b.right, b.top, b.bottom)
             }
         }.filter { it.text.isNotBlank() }
 
-        // Individual OCR elements are used for odds because 1 / X / 2 and prices can share a line.
         val elementTokens = result.textBlocks.flatMap { block ->
             block.lines.flatMap { line ->
                 line.elements.mapNotNull { el ->
                     val b = el.boundingBox ?: return@mapNotNull null
-                    Token(normalize(el.text), b.centerX(), b.centerY(), b.height(), b.left, b.right)
+                    Token(normalize(el.text), b.centerX(), b.centerY(), b.height(), b.left, b.right, b.top, b.bottom)
                 }
             }
         }.filter { it.text.isNotBlank() }
 
-        if (lineTokens.isEmpty() || elementTokens.isEmpty()) return parse(result.text)
+        if (lineTokens.isEmpty()) return parse(result.text)
 
-        val oddTokens = elementTokens.mapNotNull { t ->
-            val m = oddRegex.find(t.text) ?: return@mapNotNull null
-            val v = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@mapNotNull null
-            if (v !in 1.01..25.0 || timeRegex.matches(t.text)) return@mapNotNull null
-            t to v
-        }
-        if (oddTokens.size < 3) return parse(result.text)
+        val timeLines = lineTokens.filter { timeRegex.matches(it.text) }.sortedBy { it.cy }
+        val maxRight = lineTokens.maxOfOrNull { it.right } ?: 1000
 
-        val medianLineH = lineTokens.map { it.h }.filter { it > 0 }.sorted().let {
-            if (it.isEmpty()) 28 else it[it.size / 2]
-        }
-        val medianElementH = elementTokens.map { it.h }.filter { it > 0 }.sorted().let {
-            if (it.isEmpty()) 24 else it[it.size / 2]
-        }
+        // Preferred parser for the bookmaker layout: every event card contains one time line,
+        // two team-name lines on the left and three decimal odds in the right half.
+        if (timeLines.isNotEmpty() && elementTokens.isNotEmpty()) {
+            val out = mutableListOf<MatchCandidate>()
 
-        // Each bookmaker card has the 3 prices on one horizontal band.
-        val yTolerance = (medianElementH * 1.8).toInt().coerceAtLeast(20)
-        val rows = mutableListOf<MutableList<Pair<Token, Double>>>()
-        oddTokens.sortedBy { it.first.cy }.forEach { item ->
-            val row = rows.minByOrNull { r -> abs(r.map { it.first.cy }.average() - item.first.cy) }
-            if (row != null && abs(row.map { it.first.cy }.average() - item.first.cy) <= yTolerance) {
-                row += item
-            } else {
-                rows += mutableListOf(item)
-            }
-        }
+            timeLines.forEachIndexed { index, time ->
+                val prevTimeY = timeLines.getOrNull(index - 1)?.cy
+                val nextTimeY = timeLines.getOrNull(index + 1)?.cy
+                val topBound = if (prevTimeY == null) 0 else (prevTimeY + time.cy) / 2
+                val bottomBound = if (nextTimeY == null) Int.MAX_VALUE else (time.cy + nextTimeY) / 2
 
-        val out = mutableListOf<MatchCandidate>()
+                val cardLines = lineTokens.filter { it.cy in topBound until bottomBound }
+                val cardElements = elementTokens.filter { it.cy in topBound until bottomBound }
 
-        rows.forEach { row ->
-            val sortedOdds = row.sortedBy { it.first.cx }
-            if (sortedOdds.size < 3) return@forEach
-
-            // Try consecutive triples from left to right and keep the first geometrically valid 1-X-2 row.
-            for (i in 0..sortedOdds.size - 3) {
-                val triple = sortedOdds.subList(i, i + 3)
-                val xs = triple.map { it.first.cx }
-                if (!(xs[0] < xs[1] && xs[1] < xs[2])) continue
-
-                val rowY = triple.map { it.first.cy }.average()
-                val firstOddLeft = triple.first().first.left
-
-                // Team names are the two nearest valid full lines to the LEFT of the first odd.
-                // The vertical band is deliberately narrow so another card cannot leak into this one.
-                val candidates = lineTokens.filter { t ->
-                    t.right < firstOddLeft &&
-                    t.cy >= rowY - medianLineH * 4.5 &&
-                    t.cy <= rowY + medianLineH * 1.5 &&
-                    isTeamCandidate(t.text)
+                val odds = cardElements.mapNotNull { t ->
+                    val m = oddRegex.find(t.text) ?: return@mapNotNull null
+                    val value = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@mapNotNull null
+                    if (value !in 1.01..25.0) return@mapNotNull null
+                    t to value
                 }
+                    .filter { (t, _) -> t.cx > maxRight * 0.40 }
+                    .sortedBy { it.first.cx }
 
-                if (candidates.size < 2) continue
+                if (odds.size < 3) return@forEachIndexed
 
-                val chosen = candidates
-                    .sortedBy { abs(it.cy - rowY) }
-                    .take(2)
+                // Keep one price per 1/X/2 horizontal column. If OCR duplicated a price,
+                // collapse elements that are almost on top of each other.
+                val distinctOdds = mutableListOf<Pair<Token, Double>>()
+                odds.forEach { item ->
+                    if (distinctOdds.none { abs(it.first.cx - item.first.cx) < 28 }) distinctOdds += item
+                }
+                if (distinctOdds.size < 3) return@forEachIndexed
+                val triple = distinctOdds.take(3)
+                val firstOddX = triple.first().first.cx
+
+                val names = cardLines
+                    .filter { isTeamCandidate(it.text) }
+                    .filter { it.cy < time.cy }
+                    .filter { it.cx < firstOddX }
                     .sortedBy { it.cy }
 
+                if (names.size < 2) return@forEachIndexed
+
+                // In each card the last two valid text lines before the time are Home and Away.
+                val chosen = names.takeLast(2)
                 val home = cleanTeam(chosen[0].text)
                 val away = cleanTeam(chosen[1].text)
-                if (home.isBlank() || away.isBlank() || home.equals(away, true)) continue
+                if (home.isBlank() || away.isBlank() || home.equals(away, true)) return@forEachIndexed
 
                 out += MatchCandidate(
                     home = home,
@@ -109,17 +99,67 @@ object OcrParser {
                     oddX = triple[1].second,
                     odd2 = triple[2].second
                 )
-                break
+            }
+
+            val clean = out.distinctBy {
+                "${it.home.lowercase()}|${it.away.lowercase()}|${it.odd1}|${it.oddX}|${it.odd2}"
+            }
+            if (clean.isNotEmpty()) return clean
+        }
+
+        // Secondary spatial parser for screenshots where the time label is not detected.
+        if (elementTokens.isNotEmpty()) {
+            val oddTokens = elementTokens.mapNotNull { t ->
+                val m = oddRegex.find(t.text) ?: return@mapNotNull null
+                val v = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@mapNotNull null
+                if (v !in 1.01..25.0) return@mapNotNull null
+                t to v
+            }
+
+            if (oddTokens.size >= 3) {
+                val medianH = elementTokens.map { it.h }.filter { it > 0 }.sorted().let {
+                    if (it.isEmpty()) 24 else it[it.size / 2]
+                }
+                val yTolerance = (medianH * 2.1).toInt().coerceAtLeast(24)
+                val rows = mutableListOf<MutableList<Pair<Token, Double>>>()
+
+                oddTokens.sortedBy { it.first.cy }.forEach { item ->
+                    val row = rows.minByOrNull { r -> abs(r.map { it.first.cy }.average() - item.first.cy) }
+                    if (row != null && abs(row.map { it.first.cy }.average() - item.first.cy) <= yTolerance) row += item
+                    else rows += mutableListOf(item)
+                }
+
+                val out = mutableListOf<MatchCandidate>()
+                rows.forEach { row ->
+                    val sorted = row.sortedBy { it.first.cx }
+                    if (sorted.size < 3) return@forEach
+                    val triple = sorted.take(3)
+                    val rowY = triple.map { it.first.cy }.average()
+                    val firstOddX = triple.first().first.cx
+                    val names = lineTokens
+                        .filter { isTeamCandidate(it.text) }
+                        .filter { it.cx < firstOddX && it.cy < rowY && it.cy > rowY - 220 }
+                        .sortedBy { it.cy }
+                        .takeLast(2)
+                    if (names.size < 2) return@forEach
+
+                    out += MatchCandidate(
+                        home = cleanTeam(names[0].text),
+                        away = cleanTeam(names[1].text),
+                        odd1 = triple[0].second,
+                        oddX = triple[1].second,
+                        odd2 = triple[2].second
+                    )
+                }
+                if (out.isNotEmpty()) return out.distinctBy {
+                    "${it.home.lowercase()}|${it.away.lowercase()}|${it.odd1}|${it.oddX}|${it.odd2}"
+                }
             }
         }
 
-        val clean = out.distinctBy {
-            "${it.home.lowercase()}|${it.away.lowercase()}|${it.odd1}|${it.oddX}|${it.odd2}"
-        }
-        return if (clean.isNotEmpty()) clean else parse(result.text)
+        return parse(result.text)
     }
 
-    // Conservative text-only fallback for devices/screenshots where bounding boxes are incomplete.
     fun parse(text: String): List<MatchCandidate> {
         val lines = text.lines().map { normalize(it) }.filter { it.isNotBlank() }
         val out = mutableListOf<MatchCandidate>()
@@ -128,14 +168,14 @@ object OcrParser {
         timeIndexes.forEachIndexed { pos, ti ->
             val prevTime = if (pos == 0) -1 else timeIndexes[pos - 1]
             val nextTime = if (pos == timeIndexes.lastIndex) lines.size else timeIndexes[pos + 1]
+            val card = lines.subList((prevTime + 1).coerceAtLeast(0), nextTime)
 
             val names = lines.subList((prevTime + 1).coerceAtLeast(0), ti)
                 .filter { isTeamCandidate(it) }
                 .takeLast(2)
             if (names.size < 2) return@forEachIndexed
 
-            val searchStart = (ti - 5).coerceAtLeast(prevTime + 1)
-            val odds = lines.subList(searchStart, nextTime)
+            val odds = card
                 .filterNot { timeRegex.matches(it) }
                 .flatMap { line ->
                     oddRegex.findAll(line).mapNotNull { m ->

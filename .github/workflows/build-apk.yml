@@ -40,6 +40,13 @@ jobs:
       - name: Patch OCR parser for bookmaker cards
         run: cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
 
+      - name: Inspect sources
+        run: |
+          echo '=== KOTLIN FILES ==='
+          find buildsrc/OneStakeSelectionAI/app/src/main/java -type f -name '*.kt' -print
+          echo '=== MAIN ACTIVITY ==='
+          cat buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt || true
+
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI
         run: gradle --no-daemon :app:assembleDebug

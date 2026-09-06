@@ -27,11 +27,30 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Install fixed Android signing key
+      - name: Restore OneStake signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/onestake-selectionai.keystore
+          key: onestake-selectionai-signing-v3
+
+      - name: Ensure OneStake signing key exists
         run: |
           mkdir -p "$HOME/.android"
-          base64 -d signing/onestake-debug.keystore.b64 > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
+          if [ ! -f "$HOME/.android/onestake-selectionai.keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/onestake-selectionai.keystore" \
+              -storepass 'OneStakeLocal2026!' \
+              -keypass 'OneStakeLocal2026!' \
+              -alias onestake \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname 'CN=OneStake Selection AI,O=OneStake,C=IT'
+          fi
+          keytool -list -v \
+            -keystore "$HOME/.android/onestake-selectionai.keystore" \
+            -storepass 'OneStakeLocal2026!' \
+            -alias onestake | grep -E 'SHA1:|SHA256:'
 
       - name: Extract project
         run: |
@@ -39,7 +58,7 @@ jobs:
           mkdir buildsrc
           unzip -q OneStakeSelectionAI_v0.1.zip -d buildsrc
 
-      - name: Align Java/Kotlin and set permanent app id
+      - name: Configure Java, permanent app id and explicit signing
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -49,11 +68,15 @@ jobs:
           new = '    compileSdk = 35\n\n    compileOptions {\n        sourceCompatibility = org.gradle.api.JavaVersion.VERSION_17\n        targetCompatibility = org.gradle.api.JavaVersion.VERSION_17\n    }\n'
           if 'compileOptions {' not in s:
               s = s.replace(old, new, 1)
-          s = s.replace('applicationId = "com.onestake.selectionai"', 'applicationId = "com.onestake.selectionai.v2"')
+          s = s.replace('applicationId = "com.onestake.selectionai"', 'applicationId = "com.onestake.selectionai.v3"')
+          marker = '    buildFeatures { compose = true }'
+          signing = '''    signingConfigs {\n        create("oneStakeFixed") {\n            storeFile = file(System.getProperty("user.home") + "/.android/onestake-selectionai.keystore")\n            storePassword = "OneStakeLocal2026!"\n            keyAlias = "onestake"\n            keyPassword = "OneStakeLocal2026!"\n        }\n    }\n\n    buildTypes {\n        getByName("debug") {\n            signingConfig = signingConfigs.getByName("oneStakeFixed")\n        }\n    }\n\n'''
+          if 'oneStakeFixed' not in s:
+              s = s.replace(marker, signing + marker, 1)
           p.write_text(s)
           PY
 
-      - name: Apply Selection AI v0.3 patches
+      - name: Apply Selection AI patches
         run: |
           cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
           cp patches/MainActivity.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt
@@ -65,5 +88,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.4-fixed-signing-APK
+          name: OneStake-SelectionAI-v0.5-v3-stable-signing-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

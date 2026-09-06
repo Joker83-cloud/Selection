@@ -32,20 +32,14 @@ jobs:
           rm -rf buildsrc
           mkdir buildsrc
           unzip -q OneStakeSelectionAI_v0.1.zip -d buildsrc
-          ls -la buildsrc/OneStakeSelectionAI
 
       - name: Align Java and Kotlin to JVM 17
         run: python3 -c "from pathlib import Path; p=Path('buildsrc/OneStakeSelectionAI/app/build.gradle.kts'); s=p.read_text(); old='    compileSdk = 35\\n'; new='    compileSdk = 35\\n\\n    compileOptions {\\n        sourceCompatibility = org.gradle.api.JavaVersion.VERSION_17\\n        targetCompatibility = org.gradle.api.JavaVersion.VERSION_17\\n    }\\n'; p.write_text(s if 'compileOptions {' in s else s.replace(old,new,1))"
 
-      - name: Patch OCR parser for bookmaker cards
-        run: cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
-
-      - name: Inspect sources
+      - name: Apply Selection AI v0.3 patches
         run: |
-          echo '=== KOTLIN FILES ==='
-          find buildsrc/OneStakeSelectionAI/app/src/main/java -type f -name '*.kt' -print
-          echo '=== MAIN ACTIVITY ==='
-          cat buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt || true
+          cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
+          cp patches/MainActivity.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI
@@ -54,5 +48,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.2-APK
+          name: OneStake-SelectionAI-v0.3-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

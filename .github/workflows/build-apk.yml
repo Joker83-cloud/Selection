@@ -1,9 +1,9 @@
 name: Build OneStake APK
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -33,6 +33,28 @@ jobs:
           mkdir buildsrc
           unzip -q OneStakeSelectionAI_v0.1.zip -d buildsrc
           ls -la buildsrc/OneStakeSelectionAI
+
+      - name: Align Java and Kotlin to JVM 17
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('buildsrc/OneStakeSelectionAI/app/build.gradle.kts')
+          s = p.read_text()
+          if 'compileOptions {' not in s:
+              needle = '    compileSdk = 35\n'
+              replacement = '''    compileSdk = 35
+
+    compileOptions {
+        sourceCompatibility = org.gradle.api.JavaVersion.VERSION_17
+        targetCompatibility = org.gradle.api.JavaVersion.VERSION_17
+    }
+'''
+              if needle not in s:
+                  raise SystemExit('compileSdk marker not found')
+              s = s.replace(needle, replacement, 1)
+              p.write_text(s)
+          print(p.read_text())
+          PY
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI

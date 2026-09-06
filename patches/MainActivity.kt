@@ -38,12 +38,14 @@ fun OneStakeApp(store: HistoryStore) {
     var tab by remember { mutableIntStateOf(0) }
     var apiKey by remember { mutableStateOf(store.apiKey()) }
     var history by remember { mutableStateOf(store.load()) }
-    val tabs = listOf("ANALIZZA", "STORICO", "IMPOSTAZIONI")
+    val tabs = listOf("ANALIZZA", "STORICO", "DATI")
 
     Scaffold(topBar = { TopAppBar(title = { Text("OneStake · Selection AI") }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             TabRow(selectedTabIndex = tab) {
-                tabs.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelLarge) }) }
+                tabs.forEachIndexed { i, t ->
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelLarge) })
+                }
             }
             when (tab) {
                 0 -> AnalyzeScreen(apiKey = apiKey, history = history, onSaved = { item ->
@@ -57,6 +59,8 @@ fun OneStakeApp(store: HistoryStore) {
     }
 }
 
+private fun isOneStakeEligible(item: MatchCandidate): Boolean = item.odd1 in 1.50..2.50
+
 @Composable
 fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (MatchCandidate) -> Unit) {
     var candidates by remember { mutableStateOf(emptyList<MatchCandidate>()) }
@@ -64,6 +68,18 @@ fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (Match
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    suspend fun analyzeCandidate(item: MatchCandidate): MatchCandidate {
+        val enriched = withContext(Dispatchers.IO) {
+            try {
+                val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                ApiFootballClient(apiKey).enrich(item, date)
+            } catch (e: Exception) {
+                item.copy(notes = "API: ${e.message}")
+            }
+        }
+        return AdaptiveCalibrator.calibrate(ScoringEngine.score(enriched), history)
+    }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
@@ -79,10 +95,11 @@ fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (Match
                     "${it.home.lowercase()}|${it.away.lowercase()}|${it.odd1}|${it.oddX}|${it.odd2}"
                 }
                 candidates = merged
+                val eligible = merged.count(::isOneStakeEligible)
                 status = if (merged.isEmpty()) {
                     "Nessun match riconosciuto."
                 } else {
-                    "${merged.size} match riconosciuti da ${uris.size} screenshot. Controlla nomi e quote."
+                    "${merged.size} match riconosciuti · $eligible nella fascia 1,50–2,50."
                 }
                 busy = false
             }
@@ -106,6 +123,44 @@ fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (Match
         Button(onClick = { launcher.launch("image/*") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text(if (busy) "ELABORAZIONE…" else "📷 ALLEGA SCREENSHOT")
         }
+
+        if (candidates.isNotEmpty()) {
+            Spacer(Modifier.height(5.dp))
+            val eligibleCount = candidates.count(::isOneStakeEligible)
+            Button(
+                onClick = {
+                    scope.launch {
+                        if (apiKey.isBlank()) {
+                            status = "Inserisci prima la API key nella scheda DATI."
+                            return@launch
+                        }
+                        val validIndices = candidates.indices.filter { isOneStakeEligible(candidates[it]) }
+                        if (validIndices.isEmpty()) {
+                            status = "Nessuna partita nella fascia quota 1,50–2,50."
+                            return@launch
+                        }
+                        busy = true
+                        var working = candidates
+                        validIndices.forEachIndexed { pos, index ->
+                            val current = working[index]
+                            status = "Analisi ${pos + 1}/${validIndices.size}: ${current.home} – ${current.away}"
+                            val scored = analyzeCandidate(current)
+                            working = working.toMutableList().also { it[index] = scored }
+                            candidates = working
+                        }
+                        val playable = working.filter { isOneStakeEligible(it) && it.verdict != Verdict.NEEDS_DATA }
+                        val positive = playable.count { it.verdict != Verdict.PASS }
+                        status = "Analisi completata: $positive selezioni utili su ${validIndices.size} candidate."
+                        busy = false
+                    }
+                },
+                enabled = !busy && eligibleCount > 0,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (apiKey.isBlank()) "🔑 INSERISCI API KEY" else "⚡ ANALIZZA TUTTE ($eligibleCount)")
+            }
+        }
+
         Spacer(Modifier.height(4.dp))
         Text(status, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(4.dp))
@@ -115,18 +170,17 @@ fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (Match
                 CandidateCard(
                     item = item,
                     apiEnabled = apiKey.isNotBlank(),
+                    eligible = isOneStakeEligible(item),
                     onEdit = { changed -> candidates = candidates.toMutableList().also { it[index] = changed } },
                     onAnalyze = {
                         scope.launch {
+                            if (!isOneStakeEligible(item)) {
+                                status = "${item.home}: quota 1 fuori dalla fascia 1,50–2,50."
+                                return@launch
+                            }
                             busy = true
                             status = "Recupero dati per ${item.home}…"
-                            val enriched = withContext(Dispatchers.IO) {
-                                try {
-                                    val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                                    ApiFootballClient(apiKey).enrich(item, date)
-                                } catch (e: Exception) { item.copy(notes = "API: ${e.message}") }
-                            }
-                            val scored = AdaptiveCalibrator.calibrate(ScoringEngine.score(enriched), history)
+                            val scored = analyzeCandidate(item)
                             candidates = candidates.toMutableList().also { it[index] = scored }
                             status = "Analisi completata."
                             busy = false
@@ -143,6 +197,7 @@ fun AnalyzeScreen(apiKey: String, history: List<MatchCandidate>, onSaved: (Match
 fun CandidateCard(
     item: MatchCandidate,
     apiEnabled: Boolean,
+    eligible: Boolean,
     onEdit: (MatchCandidate) -> Unit,
     onAnalyze: () -> Unit,
     onSave: () -> Unit
@@ -155,6 +210,12 @@ fun CandidateCard(
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(7.dp)) {
+            Text(
+                if (eligible) "✅ CANDIDATA · quota 1 nella fascia" else "⛔ FUORI FILTRO · quota 1 richiesta 1,50–2,50",
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
                     value = home,
@@ -187,8 +248,20 @@ fun CandidateCard(
             if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Button(onClick = onAnalyze, enabled = apiEnabled, modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 6.dp)) {
-                    Text(if (apiEnabled) "ANALIZZA" else "API KEY", style = MaterialTheme.typography.labelMedium)
+                Button(
+                    onClick = onAnalyze,
+                    enabled = apiEnabled && eligible,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 6.dp)
+                ) {
+                    Text(
+                        when {
+                            !eligible -> "FUORI FILTRO"
+                            apiEnabled -> "ANALIZZA"
+                            else -> "API KEY"
+                        },
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
                 OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f), contentPadding = PaddingValues(vertical = 6.dp)) {
                     Text("SALVA", style = MaterialTheme.typography.labelMedium)
@@ -251,8 +324,8 @@ fun SettingsScreen(apiKey: String, onApiKey: (String) -> Unit) {
         Spacer(Modifier.height(8.dp))
         Button(onClick = { onApiKey(key) }, modifier = Modifier.fillMaxWidth()) { Text("SALVA API KEY") }
         Spacer(Modifier.height(18.dp))
-        Text("Regole", fontWeight = FontWeight.Bold)
-        Text("• quota 1 target 1,50–2,10\n• classifica generale\n• rendimento casa/trasferta\n• punti ultime 5\n• probabilità 1X2 normalizzata per overround\n• EV >2% per PRUDENTE, >5% per FORTE\n• apprendimento automatico dei pesi NON ancora attivo: prima raccogliamo un campione pulito.")
+        Text("Filtro OneStake", fontWeight = FontWeight.Bold)
+        Text("• quota 1 ammessa: 1,50–2,50\n• le quote fuori fascia vengono riconosciute ma non analizzate\n• ANALIZZA TUTTE processa solo le candidate valide\n• classifica generale\n• rendimento casa/trasferta\n• punti ultime 5\n• probabilità 1X2 normalizzata per overround\n• EV >2% per PRUDENTE, >5% per FORTE\n• apprendimento automatico dei pesi NON ancora attivo: prima raccogliamo un campione pulito.")
     }
 }
 

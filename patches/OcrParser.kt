@@ -110,7 +110,13 @@ object OcrParser {
                     .take(3)
 
                 if (odds.size == 3) {
-                    out += MatchCandidate(cleanTeam(names[0]), cleanTeam(names[1]), odds[0], odds[1], odds[2])
+                    out += MatchCandidate(
+                        home = cleanTeam(names[0]),
+                        away = cleanTeam(names[1]),
+                        odd1 = odds[0],
+                        oddX = odds[1],
+                        odd2 = odds[2]
+                    )
                 }
             }
         }

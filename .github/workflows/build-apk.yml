@@ -27,6 +27,12 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Restore stable Android signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: onestake-selectionai-debug-keystore-v1
+
       - name: Extract project
         run: |
           rm -rf buildsrc
@@ -48,5 +54,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.3-APK
+          name: OneStake-SelectionAI-v0.3-stable-signing-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

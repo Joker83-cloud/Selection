@@ -11,10 +11,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -68,11 +70,7 @@ fun OneStakeApp(store: HistoryStore) {
         Column(Modifier.padding(padding).fillMaxSize()) {
             TabRow(selectedTabIndex = tab) {
                 tabs.forEachIndexed { i, t ->
-                    Tab(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        text = { Text(t, style = MaterialTheme.typography.labelMedium) }
-                    )
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelMedium) })
                 }
             }
             when (tab) {
@@ -86,10 +84,7 @@ fun OneStakeApp(store: HistoryStore) {
                         store.save(history)
                     }
                 )
-                1 -> HistoryScreen(
-                    history = history,
-                    onChange = { updated -> history = updated; store.save(updated) }
-                )
+                1 -> HistoryScreen(history = history, onChange = { updated -> history = updated; store.save(updated) })
                 2 -> DataScreen()
             }
         }
@@ -120,6 +115,8 @@ fun AnalyzeScreen(
         val hi = maxText.replace(',', '.').toDoubleOrNull()
         if (lo != null && hi != null && lo > 1.0 && hi > lo && hi <= 10.0) {
             onRangeChange(lo, hi)
+            minText = lo.fmt2()
+            maxText = hi.fmt2()
             status = "Filtro quota aggiornato: ${lo.fmt2()}–${hi.fmt2()}"
         } else {
             status = "Filtro quota non valido: minimo < massimo."
@@ -184,7 +181,7 @@ fun AnalyzeScreen(
             CompactFilterField("Max", maxText, Modifier.weight(1f)) { maxText = it }
             Button(
                 onClick = ::updateRange,
-                modifier = Modifier.height(38.dp),
+                modifier = Modifier.height(56.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
             ) { Text("APPLICA", style = MaterialTheme.typography.labelSmall) }
         }
@@ -215,9 +212,7 @@ fun AnalyzeScreen(
                             working = working.toMutableList().also { it[index] = scored }
                             candidates = working
                         }
-                        val playable = working.filter {
-                            isOneStakeEligible(it, minOdd, maxOdd) && it.verdict != Verdict.NEEDS_DATA
-                        }
+                        val playable = working.filter { isOneStakeEligible(it, minOdd, maxOdd) && it.verdict != Verdict.NEEDS_DATA }
                         val positive = playable.count { it.verdict != Verdict.PASS }
                         status = "Analisi completata: $positive utili su ${validIndices.size} candidate."
                         busy = false
@@ -265,11 +260,15 @@ fun AnalyzeScreen(
 private fun CompactFilterField(label: String, value: String, modifier: Modifier, onValue: (String) -> Unit) {
     OutlinedTextField(
         value = value,
-        onValueChange = onValue,
+        onValueChange = { raw ->
+            val cleaned = raw.filter { it.isDigit() || it == ',' || it == '.' }.take(5)
+            onValue(cleaned)
+        },
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
-        textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(38.dp)
+        textStyle = MaterialTheme.typography.bodyMedium,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = modifier.height(56.dp)
     )
 }
 
@@ -289,24 +288,14 @@ fun CandidateCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 5.dp, vertical = 3.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CompactTextField("Casa", home, Modifier.weight(1f)) {
-                    home = it; onEdit(item.copy(home = it))
-                }
-                CompactTextField("Ospite", away, Modifier.weight(1f)) {
-                    away = it; onEdit(item.copy(away = it))
-                }
+                CompactTextField("Casa", home, Modifier.weight(1f)) { home = it; onEdit(item.copy(home = it)) }
+                CompactTextField("Ospite", away, Modifier.weight(1f)) { away = it; onEdit(item.copy(away = it)) }
             }
             Spacer(Modifier.height(1.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                OddsField("1", o1, Modifier.weight(1f)) {
-                    o1 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd1 = v)) }
-                }
-                OddsField("X", ox, Modifier.weight(1f)) {
-                    ox = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(oddX = v)) }
-                }
-                OddsField("2", o2, Modifier.weight(1f)) {
-                    o2 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd2 = v)) }
-                }
+                OddsField("1", o1, Modifier.weight(1f)) { o1 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd1 = v)) } }
+                OddsField("X", ox, Modifier.weight(1f)) { ox = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(oddX = v)) } }
+                OddsField("2", o2, Modifier.weight(1f)) { o2 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd2 = v)) } }
             }
             if (item.verdict != Verdict.NEEDS_DATA) {
                 Spacer(Modifier.height(1.dp))
@@ -316,21 +305,15 @@ fun CandidateCard(
                     style = MaterialTheme.typography.labelSmall
                 )
             }
-            if (item.notes.isNotBlank()) {
-                Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
-            }
+            if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
             Spacer(Modifier.height(1.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    onClick = onAnalyze,
-                    modifier = Modifier.weight(1f).height(30.dp),
-                    contentPadding = PaddingValues(vertical = 0.dp)
-                ) { Text("ANALIZZA", style = MaterialTheme.typography.labelSmall) }
-                OutlinedButton(
-                    onClick = onSave,
-                    modifier = Modifier.weight(1f).height(30.dp),
-                    contentPadding = PaddingValues(vertical = 0.dp)
-                ) { Text("SALVA", style = MaterialTheme.typography.labelSmall) }
+                Button(onClick = onAnalyze, modifier = Modifier.weight(1f).height(30.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
+                    Text("ANALIZZA", style = MaterialTheme.typography.labelSmall)
+                }
+                OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f).height(30.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
+                    Text("SALVA", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
@@ -356,6 +339,7 @@ fun OddsField(label: String, value: String, modifier: Modifier, onValue: (String
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = modifier.height(36.dp)
     )
 }
@@ -369,11 +353,7 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
     val roi = if (staked == 0.0) 0.0 else profit / staked
 
     Column(Modifier.fillMaxSize().padding(8.dp)) {
-        Text(
-            "Casi: ${settled.size} · Vinte: $won · Win ${(if (settled.isEmpty()) 0.0 else won * 100.0 / settled.size).fmt1()}% · ROI ${(roi * 100).fmt1()}%",
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("Casi: ${settled.size} · Vinte: $won · Win ${(if (settled.isEmpty()) 0.0 else won * 100.0 / settled.size).fmt1()}% · ROI ${(roi * 100).fmt1()}%", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
         Text("Stake virtuale 1 unità. Gli esiti alimentano la calibrazione.", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(4.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -384,21 +364,9 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
                         Text("${item.home} – ${item.away} · 1 @${item.odd1.fmt2()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                         Text("Score ${item.score} · EV ${(item.ev * 100).fmt1()}% · ${item.verdict}", style = MaterialTheme.typography.labelSmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Button(
-                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) },
-                                modifier = Modifier.height(30.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
-                            Button(
-                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) },
-                                modifier = Modifier.height(30.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
-                            OutlinedButton(
-                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) },
-                                modifier = Modifier.height(30.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                            ) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
+                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) }, modifier = Modifier.height(30.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
+                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) }, modifier = Modifier.height(30.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
+                            OutlinedButton(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) }, modifier = Modifier.height(30.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
                         }
                     }
                 }
@@ -427,10 +395,7 @@ fun DataScreen() {
         )
         Spacer(Modifier.height(12.dp))
         Text("Fonti dati", fontWeight = FontWeight.Bold)
-        Text(
-            "Diretta è la fonte primaria; SofaScore completa i dati quando necessario. L'app non richiede né utilizza una API key per le valutazioni.",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("Diretta è la fonte primaria; SofaScore completa i dati quando necessario. L'app non richiede né utilizza una API key per le valutazioni.", style = MaterialTheme.typography.bodySmall)
     }
 }
 

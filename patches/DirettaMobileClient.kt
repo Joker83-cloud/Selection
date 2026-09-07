@@ -31,11 +31,22 @@ class DirettaMobileClient {
 
         var homeRank: Int? = null
         var awayRank: Int? = null
+        var standingsHtml: String? = null
+
         match.standingsUrl?.let { url ->
             runCatching { fetchAbsolute(url) }.getOrNull()?.let { html ->
+                standingsHtml = html
                 val rows = parseStandings(html)
                 homeRank = findRank(rows, candidate.home)
                 awayRank = findRank(rows, candidate.away)
+            }
+        }
+
+        val competitionResults = mutableListOf<TeamResult>()
+        val resultsUrl = standingsHtml?.let { extractLinkByText(it, "Risultati") }
+        if (resultsUrl != null) {
+            runCatching { fetchAbsolute(resultsUrl) }.getOrNull()?.let { html ->
+                competitionResults += parseFinishedResults(html)
             }
         }
 
@@ -46,13 +57,12 @@ class DirettaMobileClient {
         var awayGamesAway = 0
         var awayLossesAway = 0
 
-        for (d in 1..60) {
-            val html = runCatching { fetchDay(-d) }.getOrNull() ?: continue
-            for (r in parseFinishedResults(html)) {
-                val homeIsHome = similarity(candidate.home, r.home) >= 0.76
-                val homeIsAway = similarity(candidate.home, r.away) >= 0.76
-                val awayIsHome = similarity(candidate.away, r.home) >= 0.76
-                val awayIsAway = similarity(candidate.away, r.away) >= 0.76
+        fun consume(results: List<TeamResult>) {
+            for (r in results) {
+                val homeIsHome = similarity(candidate.home, r.home) >= 0.72
+                val homeIsAway = similarity(candidate.home, r.away) >= 0.72
+                val awayIsHome = similarity(candidate.away, r.home) >= 0.72
+                val awayIsAway = similarity(candidate.away, r.away) >= 0.72
 
                 if ((homeIsHome || homeIsAway) && recentHome.size < 5) {
                     val gf = if (homeIsHome) r.homeGoals else r.awayGoals
@@ -83,8 +93,16 @@ class DirettaMobileClient {
                     if (r.awayGoals < r.homeGoals) awayLossesAway++
                 }
             }
+        }
 
-            if (recentHome.size >= 5 && recentAway.size >= 5 && homeGamesAtHome >= 3 && awayGamesAway >= 3) break
+        if (competitionResults.isNotEmpty()) consume(competitionResults)
+
+        if (recentHome.size < 5 || recentAway.size < 5 || homeGamesAtHome < 3 || awayGamesAway < 3) {
+            for (d in 1..75) {
+                val html = runCatching { fetchDay(-d) }.getOrNull() ?: continue
+                consume(parseFinishedResults(html))
+                if (recentHome.size >= 5 && recentAway.size >= 5 && homeGamesAtHome >= 3 && awayGamesAway >= 3) break
+            }
         }
 
         val homePts5 = recentHome.take(5).takeIf { it.size >= 3 }?.sum()
@@ -103,10 +121,11 @@ class DirettaMobileClient {
         val syntheticAwayId = -kotlin.math.abs(candidate.away.hashCode()).coerceAtLeast(1)
         val syntheticFixtureId = -kotlin.math.abs((candidate.home + "|" + candidate.away + "|" + date).hashCode()).coerceAtLeast(1)
 
+        val sourceNote = if (competitionResults.isNotEmpty()) "risultati competizione" else "archivio giornaliero"
         val note = if (missing.isEmpty()) {
-            "Diretta · ${match.leagueName} · classifica, ultime 5 e casa/trasferta recuperati"
+            "Diretta · ${match.leagueName} · classifica, ultime 5 e casa/trasferta recuperati · $sourceNote"
         } else {
-            "Diretta · ${match.leagueName} · mancanti: ${missing.distinct().joinToString(", ")}"
+            "Diretta · ${match.leagueName} · mancanti: ${missing.distinct().joinToString(", ")} · $sourceNote"
         }
 
         return candidate.copy(
@@ -150,19 +169,21 @@ class DirettaMobileClient {
     }
 
     private fun fetchAbsolute(url: String): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.connectTimeout = 10000
-        conn.readTimeout = 10000
-        conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/0.9")
-        conn.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-        return try {
-            val code = conn.responseCode
-            if (code !in 200..299) throw IllegalStateException("Diretta HTTP $code")
-            conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally {
-            conn.disconnect()
+        return cache.computeIfAbsent(url) {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+            conn.instanceFollowRedirects = true
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/1.0")
+            conn.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            try {
+                val code = conn.responseCode
+                if (code !in 200..299) throw IllegalStateException("Diretta HTTP $code")
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } finally {
+                conn.disconnect()
+            }
         }
     }
 
@@ -176,7 +197,7 @@ class DirettaMobileClient {
             val bodyHtml = m.groupValues[2]
             val league = cleanText(headerHtml).replace("Classifiche", "").trim()
             val standingsHref = Regex("(?is)href=[\"']([^\"']+)[\"'][^>]*>\\s*Classifiche").find(headerHtml)?.groupValues?.get(1)
-            val standingsUrl = standingsHref?.let { if (it.startsWith("http")) it else base + if (it.startsWith("/")) it else "/$it" }
+            val standingsUrl = standingsHref?.let { absolute(it) }
 
             for (line in htmlToLines(bodyHtml)) {
                 val fixture = parseFixtureLine(line) ?: continue
@@ -190,6 +211,17 @@ class DirettaMobileClient {
             }
         }
         return best?.takeIf { bestScore >= 0.72 }
+    }
+
+    private fun extractLinkByText(html: String, text: String): String? {
+        val regex = Regex("(?is)<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>\\s*${Regex.escape(text)}\\s*</a>")
+        return regex.find(html)?.groupValues?.get(1)?.let { absolute(it) }
+    }
+
+    private fun absolute(href: String): String = when {
+        href.startsWith("http://") || href.startsWith("https://") -> href
+        href.startsWith("/") -> base + href
+        else -> "$base/$href"
     }
 
     private fun parseStandings(html: String): List<Pair<String, Int>> {
@@ -220,7 +252,10 @@ class DirettaMobileClient {
 
     private fun parseFinishedResults(html: String): List<TeamResult> {
         val out = mutableListOf<TeamResult>()
-        val scoreRegex = Regex("^(.*?\\S)\\s+-\\s+(.*?\\S)\\s+(\\d{1,2})-(\\d{1,2})(?:\\s.*)?$")
+        val scoreRegexes = listOf(
+            Regex("^(.*?\\S)\\s+-\\s+(.*?\\S)\\s+(\\d{1,2})-(\\d{1,2})(?:\\s.*)?$"),
+            Regex("^(?:\\d{1,2}\\.\\d{1,2}\\.\\s+)?(.*?\\S)\\s+-\\s+(.*?\\S)\\s+(\\d{1,2})\\s*:\\s*(\\d{1,2})(?:\\s.*)?$")
+        )
         for (raw in htmlToLines(html)) {
             val line = raw
                 .replace("Image", " ")
@@ -228,7 +263,7 @@ class DirettaMobileClient {
                 .replace(Regex("^(?:Intervallo|Finale|Posticipata|Sospesa)\\s+", RegexOption.IGNORE_CASE), "")
                 .replace(Regex("^\\d{1,3}(?:\\+\\d+)?'\\s*"), "")
                 .trim()
-            val m = scoreRegex.find(line) ?: continue
+            val m = scoreRegexes.asSequence().mapNotNull { it.find(line) }.firstOrNull() ?: continue
             val h = m.groupValues[1].trim()
             val a = m.groupValues[2].trim()
             val hg = m.groupValues[3].toIntOrNull() ?: continue
@@ -257,7 +292,7 @@ class DirettaMobileClient {
     private fun htmlToLines(html: String): List<String> {
         val prepared = html
             .replace(Regex("(?is)<br\\s*/?>"), "\n")
-            .replace(Regex("(?is)</(?:div|p|li|tr|h[1-6])>"), "\n")
+            .replace(Regex("(?is)</(?:div|p|li|tr|h[1-6]|td|th)>"), "\n")
         return prepared.split('\n')
             .map { cleanText(it) }
             .map { it.replace(Regex("\\s+"), " ").trim() }
@@ -293,7 +328,7 @@ class DirettaMobileClient {
 
     private fun normalize(s: String): String = Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "")
-        .replace(Regex("\\b(fc|cf|sc|ac|afc|club|de|the)\\b"), " ")
+        .replace(Regex("\\b(fc|cf|sc|ac|afc|club|de|the|as|sk)\\b"), " ")
         .replace(Regex("[^a-z0-9 ]"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()

@@ -34,7 +34,7 @@ class HybridFootballClient(private val apiKey: String) {
         if (item.awayAwayLossRate != null) s += 2
         if (item.homeFormPoints5 != null) s += 2
         if (item.awayFormPoints5 != null) s += 2
-        if (item.leagueName.isNotBlank()) s += 1
+        if (!item.leagueName.orEmpty().isBlank()) s += 1
         if (item.fixtureId != null) s += 1
         return s
     }
@@ -48,7 +48,7 @@ class HybridFootballClient(private val apiKey: String) {
         return a.copy(
             fixtureId = a.fixtureId ?: b.fixtureId,
             leagueId = a.leagueId ?: b.leagueId,
-            leagueName = a.leagueName.ifBlank { b.leagueName },
+            leagueName = a.leagueName.orEmpty().ifBlank { b.leagueName.orEmpty() },
             season = a.season ?: b.season,
             homeTeamId = a.homeTeamId ?: b.homeTeamId,
             awayTeamId = a.awayTeamId ?: b.awayTeamId,

@@ -1,9 +1,9 @@
-name: Build OneStake v0.25
+name: Build OneStake v0.26
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "v026-fallback-fix" ]
 
 jobs:
   build:
@@ -119,6 +119,7 @@ jobs:
           python3 patches/BuildAdjust.py "$SRC/MainActivity.kt" "buildsrc/OneStakeSelectionAI/app/src/main/AndroidManifest.xml"
           python3 patches/SelectionV024Adjust.py "$SRC/MainActivity.kt"
           python3 patches/SelectionV025Adjust.py "$SRC/MainActivity.kt"
+          python3 patches/SelectionV026Adjust.py "$SRC/HybridFootballClient.kt" "$SRC/ScoringEngine.kt"
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI
@@ -127,5 +128,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.25-1X2-adaptive-APK
+          name: OneStake-SelectionAI-v0.26-robust-data-fallback-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

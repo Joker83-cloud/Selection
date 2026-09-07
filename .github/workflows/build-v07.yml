@@ -1,4 +1,4 @@
-name: Build OneStake v0.9
+name: Build OneStake v0.8
 
 on:
   workflow_dispatch:
@@ -98,59 +98,7 @@ jobs:
           cp patches/ScoringEngine.kt "$SRC/ScoringEngine.kt"
           cp patches/DirettaMobileClient.kt "$SRC/DirettaMobileClient.kt"
           cp patches/HybridFootballClient.kt "$SRC/HybridFootballClient.kt"
-          python3 - <<'PY'
-          from pathlib import Path
-
-          src = Path('buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai')
-          p = src / 'MainActivity.kt'
-          s = p.read_text()
-          s = s.replace('ApiFootballClient(apiKey).enrich(item, date)', 'DirettaMobileClient().enrich(item, date)')
-          s = s.replace('item.copy(notes = "API: ${e.message}")', 'item.copy(notes = "Diretta non disponibile: ${e.message}")')
-          s = s.replace('''                        if (apiKey.isBlank()) {
-                            status = "Inserisci prima la API key nella scheda DATI."
-                            return@launch
-                        }
-''', '')
-          s = s.replace('Text(if (apiKey.isBlank()) "🔑 INSERISCI API KEY" else "⚡ ANALIZZA TUTTE ($eligibleCount)")', 'Text("⚡ ANALIZZA TUTTE ($eligibleCount)")')
-          s = s.replace('apiEnabled = apiKey.isNotBlank(),', 'apiEnabled = true,')
-          s = s.replace('Inserisci la tua API key API-Football. Viene salvata solo sul dispositivo.', 'Fonte dati: Diretta.it. Nessuna API key richiesta.')
-          s = s.replace('label = { Text("API-Football key") }', 'label = { Text("API key non utilizzata") }')
-          s = s.replace('Text("SALVA API KEY")', 'Text("DATI DA DIRETTA.IT")')
-          p.write_text(s)
-
-          p = src / 'DirettaMobileClient.kt'
-          s = p.read_text()
-          old = '''        val today = fetchDay(0)
-        val match = findLeagueMatch(today, candidate)
-            ?: return candidate.copy(notes = mergeNote(candidate.notes, "Diretta: partita non identificata nella pagina mobile di oggi"))
-'''
-          new = '''        var match: LeagueMatch? = null
-        var matchedOffset: Int? = null
-        val offsets = listOf(0, 1, 2, 3, 4, 5, 6, 7, -1, -2)
-        for (offset in offsets) {
-            val html = runCatching { fetchDay(offset) }.getOrNull() ?: continue
-            val found = findLeagueMatch(html, candidate)
-            if (found != null) {
-                match = found
-                matchedOffset = offset
-                break
-            }
-        }
-        val resolvedMatch = match
-            ?: return candidate.copy(notes = mergeNote(candidate.notes, "Diretta: partita non identificata tra oggi e i prossimi 7 giorni"))
-'''
-          if old not in s:
-              raise SystemExit('Diretta match lookup block not found')
-          s = s.replace(old, new, 1)
-          s = s.replace('match.standingsUrl?.let { url ->', 'resolvedMatch.standingsUrl?.let { url ->')
-          s = s.replace('match.leagueName.hashCode()', 'resolvedMatch.leagueName.hashCode()')
-          s = s.replace('${match.leagueName}', '${resolvedMatch.leagueName}')
-          s = s.replace('leagueName = match.leagueName,', 'leagueName = resolvedMatch.leagueName,')
-          s = s.replace('Mozilla/5.0 (Android) OneStakeSelectionAI/0.8', 'Mozilla/5.0 (Android) OneStakeSelectionAI/0.9')
-          s = s.replace('Diretta mobile · ${resolvedMatch.leagueName} · classifica, ultime 5 e casa/trasferta recuperati', 'Diretta · ${resolvedMatch.leagueName} · classifica, ultime 5 e casa/trasferta recuperati')
-          s = s.replace('Diretta mobile · ${resolvedMatch.leagueName} · mancanti:', 'Diretta · ${resolvedMatch.leagueName} · mancanti:')
-          p.write_text(s)
-          PY
+          sed -i 's/ApiFootballClient(apiKey)/HybridFootballClient(apiKey)/g' "$SRC/MainActivity.kt"
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI
@@ -159,5 +107,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.9-diretta-only-APK
+          name: OneStake-SelectionAI-v0.8-diretta-fallback-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

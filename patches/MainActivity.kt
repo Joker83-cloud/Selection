@@ -248,13 +248,13 @@ fun CandidateCard(item: MatchCandidate, onEdit: (MatchCandidate) -> Unit, onAnal
 @Composable
 private fun CompactTextField(label: String, value: String, modifier: Modifier, onValue: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onValue, label = { Text(label, style = MaterialTheme.typography.labelSmall) }, singleLine = true,
-        textStyle = MaterialTheme.typography.bodySmall, modifier = modifier.height(50.dp))
+        textStyle = MaterialTheme.typography.bodyMedium, modifier = modifier.height(56.dp))
 }
 
 @Composable
 fun OddsField(label: String, value: String, modifier: Modifier, onValue: (String) -> Unit) {
     OutlinedTextField(value = value, onValueChange = onValue, label = { Text(label, style = MaterialTheme.typography.labelSmall) }, singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), textStyle = MaterialTheme.typography.bodySmall, modifier = modifier.height(48.dp))
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), textStyle = MaterialTheme.typography.bodyMedium, modifier = modifier.height(56.dp))
 }
 
 @Composable

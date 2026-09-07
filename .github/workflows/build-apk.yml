@@ -47,10 +47,6 @@ jobs:
               -validity 10000 \
               -dname 'CN=OneStake Selection AI,O=OneStake,C=IT'
           fi
-          keytool -list -v \
-            -keystore "$HOME/.android/onestake-selectionai.keystore" \
-            -storepass 'OneStakeLocal2026!' \
-            -alias onestake | grep -E 'SHA1:|SHA256:'
 
       - name: Extract project
         run: |
@@ -80,6 +76,29 @@ jobs:
         run: |
           cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
           cp patches/MainActivity.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt')
+          s = p.read_text()
+          old = '        return AdaptiveCalibrator.calibrate(ScoringEngine.score(enriched), history)'
+          new = '''        val scored = AdaptiveCalibrator.calibrate(ScoringEngine.score(enriched), history)
+        return if (scored.homeRank == null || scored.awayRank == null) {
+            scored.copy(
+                verdict = Verdict.NEEDS_DATA,
+                notes = "⚠️ DATI INSUFFICIENTI · classifica/campionato non recuperati. Nessun consiglio di giocata."
+            )
+        } else scored'''
+          if old not in s:
+              raise SystemExit('analyzeCandidate marker not found')
+          s = s.replace(old, new, 1)
+          old2 = '                        status = "Analisi completata: $positive selezioni utili su ${validIndices.size} candidate."'
+          new2 = '''                        val insufficient = working.count { isOneStakeEligible(it) && it.verdict == Verdict.NEEDS_DATA }
+                        status = "Analisi completata: $positive utili · $insufficient con dati insufficienti · ${validIndices.size} candidate."'''
+          if old2 not in s:
+              raise SystemExit('status marker not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+          PY
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI
@@ -88,5 +107,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OneStake-SelectionAI-v0.5-v3-stable-signing-APK
+          name: OneStake-SelectionAI-v0.6-data-guard-APK
           path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

@@ -1,0 +1,107 @@
+name: Build OneStake v0.7
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Restore stable signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/onestake-selectionai.keystore
+          key: onestake-selectionai-signing-v3
+
+      - name: Verify signing key exists
+        run: test -f "$HOME/.android/onestake-selectionai.keystore"
+
+      - name: Extract project
+        run: |
+          rm -rf buildsrc
+          mkdir buildsrc
+          unzip -q OneStakeSelectionAI_v0.1.zip -d buildsrc
+
+      - name: Configure project and stable signing
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          old_workflow = Path('.github/workflows/build-apk.yml').read_text()
+          password_match = re.search(r"-storepass '([^']+)'", old_workflow)
+          alias_match = re.search(r"-alias\s+([^\\\s]+)", old_workflow)
+          if not password_match or not alias_match:
+              raise SystemExit('Unable to recover existing stable signing configuration')
+          password = password_match.group(1)
+          alias = alias_match.group(1)
+
+          p = Path('buildsrc/OneStakeSelectionAI/app/build.gradle.kts')
+          s = p.read_text()
+          if 'compileOptions {' not in s:
+              s = s.replace(
+                  '    compileSdk = 35\n',
+                  '    compileSdk = 35\n\n    compileOptions {\n        sourceCompatibility = org.gradle.api.JavaVersion.VERSION_17\n        targetCompatibility = org.gradle.api.JavaVersion.VERSION_17\n    }\n',
+                  1
+              )
+          s = s.replace(
+              'applicationId = "com.onestake.selectionai"',
+              'applicationId = "com.onestake.selectionai.v3"'
+          )
+          marker = '    buildFeatures { compose = true }'
+          signing = f'''    signingConfigs {{
+              create("oneStakeFixed") {{
+                  storeFile = file(System.getProperty("user.home") + "/.android/onestake-selectionai.keystore")
+                  storePassword = "{password}"
+                  keyAlias = "{alias}"
+                  keyPassword = "{password}"
+              }}
+          }}
+
+          buildTypes {{
+              getByName("debug") {{
+                  signingConfig = signingConfigs.getByName("oneStakeFixed")
+              }}
+          }}
+
+          '''
+          if 'oneStakeFixed' not in s:
+              s = s.replace(marker, signing + marker, 1)
+          p.write_text(s)
+          PY
+
+      - name: Apply app patches
+        run: |
+          cp patches/OcrParser.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/OcrParser.kt
+          cp patches/MainActivity.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt
+          cp patches/ApiFootballClient.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/ApiFootballClient.kt
+          cp patches/ScoringEngine.kt buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/ScoringEngine.kt
+
+      - name: Build APK
+        working-directory: buildsrc/OneStakeSelectionAI
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneStake-SelectionAI-v0.7-robust-data-APK
+          path: buildsrc/OneStakeSelectionAI/app/build/outputs/apk/debug/app-debug.apk

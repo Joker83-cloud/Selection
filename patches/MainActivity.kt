@@ -54,7 +54,14 @@ fun OneStakeApp(store: HistoryStore) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("OneStake · Selection AI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+                modifier = Modifier.statusBarsPadding(),
+                title = {
+                    Text(
+                        "OneStake · Selection AI",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             )
         }
     ) { padding ->
@@ -76,7 +83,7 @@ fun OneStakeApp(store: HistoryStore) {
                     }
                 )
                 1 -> HistoryScreen(history = history, onChange = { updated -> history = updated; store.save(updated) })
-                2 -> DataScreen()
+                2 -> DataScreen(minOdd, maxOdd)
             }
         }
     }
@@ -170,8 +177,8 @@ fun AnalyzeScreen(
             CompactFilterField("Quota max", maxText, Modifier.weight(1f)) { maxText = it }
             Button(
                 onClick = ::updateRange,
-                modifier = Modifier.height(42.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                modifier = Modifier.height(40.dp),
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)
             ) { Text("APPLICA", style = MaterialTheme.typography.labelSmall) }
         }
 
@@ -179,7 +186,7 @@ fun AnalyzeScreen(
         Button(
             onClick = { launcher.launch("image/*") },
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth().height(42.dp),
+            modifier = Modifier.fillMaxWidth().height(40.dp),
             contentPadding = PaddingValues(vertical = 0.dp)
         ) {
             Text(if (busy) "ELABORAZIONE…" else "📷 ALLEGA SCREENSHOT", style = MaterialTheme.typography.labelLarge)
@@ -208,7 +215,7 @@ fun AnalyzeScreen(
                     }
                 },
                 enabled = !busy,
-                modifier = Modifier.fillMaxWidth().height(42.dp),
+                modifier = Modifier.fillMaxWidth().height(40.dp),
                 contentPadding = PaddingValues(vertical = 0.dp)
             ) {
                 Text("⚡ ANALIZZA TUTTE (${visibleCandidates.size})", style = MaterialTheme.typography.labelLarge)
@@ -253,7 +260,7 @@ private fun CompactFilterField(label: String, value: String, modifier: Modifier,
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(42.dp)
+        modifier = modifier.height(40.dp)
     )
 }
 
@@ -291,16 +298,12 @@ fun CandidateCard(
             if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
             Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    onClick = onAnalyze,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    contentPadding = PaddingValues(vertical = 0.dp)
-                ) { Text("ANALIZZA", style = MaterialTheme.typography.labelSmall) }
-                OutlinedButton(
-                    onClick = onSave,
-                    modifier = Modifier.weight(1f).height(34.dp),
-                    contentPadding = PaddingValues(vertical = 0.dp)
-                ) { Text("SALVA", style = MaterialTheme.typography.labelSmall) }
+                Button(onClick = onAnalyze, modifier = Modifier.weight(1f).height(32.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
+                    Text("ANALIZZA", style = MaterialTheme.typography.labelSmall)
+                }
+                OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f).height(32.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
+                    Text("SALVA", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
@@ -314,7 +317,7 @@ private fun CompactTextField(label: String, value: String, modifier: Modifier, o
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(42.dp)
+        modifier = modifier.height(40.dp)
     )
 }
 
@@ -326,7 +329,7 @@ fun OddsField(label: String, value: String, modifier: Modifier, onValue: (String
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(40.dp)
+        modifier = modifier.height(38.dp)
     )
 }
 
@@ -350,9 +353,9 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
                         Text("${item.home} – ${item.away} · 1 @${item.odd1.fmt2()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                         Text("Score ${item.score} · EV ${(item.ev * 100).fmt1()}% · ${item.verdict}", style = MaterialTheme.typography.labelSmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) }, modifier = Modifier.height(34.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
-                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) }, modifier = Modifier.height(34.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
-                            OutlinedButton(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) }, modifier = Modifier.height(34.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
+                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
+                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
+                            OutlinedButton(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
                         }
                     }
                 }
@@ -362,8 +365,11 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
 }
 
 @Composable
-fun DataScreen() {
+fun DataScreen(minOdd: Double, maxOdd: Double) {
     Column(Modifier.fillMaxSize().padding(12.dp)) {
+        Text("Filtro attivo", fontWeight = FontWeight.Bold)
+        Text("Quota 1: ${minOdd.fmt2()}–${maxOdd.fmt2()} · modificabile solo nella scheda ANALIZZA.", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
         Text("Valutazione", fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -381,7 +387,7 @@ fun DataScreen() {
         )
         Spacer(Modifier.height(10.dp))
         Text("Fonti", fontWeight = FontWeight.Bold)
-        Text("Diretta è la fonte primaria; SofaScore viene usato solo come fallback per completare dati mancanti. Nessuna API key è richiesta.", style = MaterialTheme.typography.bodySmall)
+        Text("Diretta è la fonte primaria; SofaScore completa i dati quando necessario. Nessuna API key viene letta o usata dall'app.", style = MaterialTheme.typography.bodySmall)
     }
 }
 

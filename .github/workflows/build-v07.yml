@@ -100,44 +100,6 @@ jobs:
           cp patches/HybridFootballClient.kt "$SRC/HybridFootballClient.kt"
           sed -i 's/ApiFootballClient(apiKey)/HybridFootballClient(apiKey)/g' "$SRC/MainActivity.kt"
 
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('buildsrc/OneStakeSelectionAI/app/src/main/java/com/onestake/selectionai/MainActivity.kt')
-          s = p.read_text()
-
-          # Keep ANALIZZA contents when switching tabs.
-          if 'private object AnalyzeSession' not in s:
-              marker = 'class MainActivity : ComponentActivity() {'
-              session = '''private object AnalyzeSession {
-    var candidates: List<MatchCandidate> = emptyList()
-    var status: String = "Allega uno o più screenshot con squadre e quote 1-X-2."
-}
-
-'''
-              s = s.replace(marker, session + marker, 1)
-          s = s.replace(
-              'var candidates by remember { mutableStateOf(emptyList<MatchCandidate>()) }',
-              'var candidates by remember { mutableStateOf(AnalyzeSession.candidates) }'
-          )
-          s = s.replace(
-              'var status by remember { mutableStateOf("Allega uno o più screenshot con squadre e quote 1-X-2.") }',
-              'var status by remember { mutableStateOf(AnalyzeSession.status) }'
-          )
-          anchor = '    val context = androidx.compose.ui.platform.LocalContext.current\n\n    fun updateRange()'
-          if 'AnalyzeSession.candidates = candidates' not in s:
-              s = s.replace(
-                  anchor,
-                  '    val context = androidx.compose.ui.platform.LocalContext.current\n\n    SideEffect {\n        AnalyzeSession.candidates = candidates\n        AnalyzeSession.status = status\n    }\n\n    fun updateRange()',
-                  1
-              )
-
-          # Give the top odds filter enough vertical room and align APPLICA.
-          s = s.replace('modifier = modifier.height(48.dp))', 'modifier = modifier.height(56.dp))', 1)
-          s = s.replace('modifier = Modifier.height(48.dp)', 'modifier = Modifier.height(56.dp)', 1)
-
-          p.write_text(s)
-          PY
-
           RES=buildsrc/OneStakeSelectionAI/app/src/main/res
           mkdir -p "$RES/drawable"
           cat > "$RES/drawable/ic_onestake.xml" <<'EOF'
@@ -153,21 +115,7 @@ jobs:
           </vector>
           EOF
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p = Path('buildsrc/OneStakeSelectionAI/app/src/main/AndroidManifest.xml')
-          s = p.read_text()
-          m = re.search(r'<application\b[^>]*>', s, flags=re.S)
-          if not m:
-              raise SystemExit('application tag not found')
-          tag = m.group(0)
-          tag = re.sub(r'\s+android:icon="[^"]+"', '', tag)
-          tag = re.sub(r'\s+android:roundIcon="[^"]+"', '', tag)
-          tag = tag[:-1] + '\n        android:icon="@drawable/ic_onestake"\n        android:roundIcon="@drawable/ic_onestake">'
-          s = s[:m.start()] + tag + s[m.end():]
-          p.write_text(s)
-          PY
+          python3 patches/BuildAdjust.py "$SRC/MainActivity.kt" "buildsrc/OneStakeSelectionAI/app/src/main/AndroidManifest.xml"
 
       - name: Build APK
         working-directory: buildsrc/OneStakeSelectionAI

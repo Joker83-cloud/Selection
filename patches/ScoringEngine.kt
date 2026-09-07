@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 object ScoringEngine {
-    fun score(m: MatchCandidate): MatchCandidate {
+    fun score(m: MatchCandidate, minOdd: Double = 1.50, maxOdd: Double = 2.50): MatchCandidate {
         val impliedRaw = 1.0 / m.odd1
         val overround = (1.0 / m.odd1) + (1.0 / m.oddX) + (1.0 / m.odd2)
         val marketP = impliedRaw / overround
@@ -29,21 +29,20 @@ object ScoringEngine {
             )
         }
 
-        if (m.odd1 !in 1.50..2.50) {
+        if (m.odd1 < minOdd || m.odd1 > maxOdd) {
             return m.copy(
                 score = 0,
                 estimatedP = marketP,
                 fairOdd = 1.0 / marketP,
                 ev = 0.0,
                 verdict = Verdict.PASS,
-                notes = "Quota 1 fuori range OneStake"
+                notes = "Quota 1 fuori filtro ${String.format(java.util.Locale.US, "%.2f", minOdd)}–${String.format(java.util.Locale.US, "%.2f", maxOdd)}"
             )
         }
 
         var pts = 0
         val reasons = mutableListOf<String>()
 
-        // 1) Quota: premiamo la fascia preferita, ma non scegliamo automaticamente la quota più bassa.
         when (m.odd1) {
             in 1.50..1.80 -> { pts += 16; reasons += "quota target" }
             in 1.81..2.10 -> { pts += 14; reasons += "quota buona" }
@@ -51,7 +50,6 @@ object ScoringEngine {
             else -> pts += 5
         }
 
-        // 2) Classifica generale: vantaggio casa è il pattern più solido; il rimbalzo resta sperimentale.
         val rankGap = m.awayRank!! - m.homeRank!!
         when {
             rankGap >= 8 -> { pts += 20; reasons += "forte vantaggio classifica" }
@@ -61,7 +59,6 @@ object ScoringEngine {
             else -> { pts += 2; reasons += "casa dietro in classifica" }
         }
 
-        // 3) Rendimento specifico casa/trasferta: è il nucleo del modello.
         when {
             m.homeHomeWinRate!! >= .70 -> { pts += 22; reasons += "rendimento casa molto forte" }
             m.homeHomeWinRate >= .60 -> { pts += 18; reasons += "forte rendimento casa" }
@@ -78,7 +75,6 @@ object ScoringEngine {
             else -> { pts -= 4; reasons += "ospite solida fuori" }
         }
 
-        // 4) Ultime 5: il vantaggio recente è positivo; il pattern "casa dietro" resta solo un piccolo bonus test.
         val formDiff = m.homeFormPoints5!! - m.awayFormPoints5!!
         when {
             formDiff >= 6 -> { pts += 14; reasons += "forma recente casa molto superiore" }
@@ -88,20 +84,16 @@ object ScoringEngine {
             else -> { pts += 1; reasons += "casa nettamente dietro ultime 5" }
         }
 
-        // Bonus sperimentale rimbalzo: solo se sostenuto da forte rendimento casalingo.
         if (rankGap < 0 && formDiff < 0 && m.homeHomeWinRate >= .60 && m.awayAwayLossRate >= .45) {
             pts += 6
             reasons += "rimbalzo supportato da casa/trasferta"
         }
 
-        // Hard penalties: impediscono di promuovere favorite che non mostrano vera forza specifica.
         if (m.homeHomeWinRate < .40) pts -= 8
         if (m.awayAwayLossRate < .30) pts -= 6
         if (rankGap <= -5 && formDiff <= -4) pts -= 8
 
         val score = pts.coerceIn(0, 100)
-
-        // Probabilità: mercato come ancora principale + dati reali casa/trasferta + piccoli aggiustamenti forma/classifica.
         val empirical = ((m.homeHomeWinRate + m.awayAwayLossRate) / 2.0).coerceIn(.20, .85)
         val rankAdj = when {
             rankGap >= 8 -> .035
@@ -119,7 +111,6 @@ object ScoringEngine {
         val fair = 1.0 / p
         val edge = p - breakEvenP
 
-        // Selezione severa: niente "DA GIOCARE" senza edge reale sulla quota.
         val verdict = when {
             score >= 80 && ev >= .06 && edge >= .025 && m.homeHomeWinRate >= .50 -> Verdict.STRONG
             score >= 70 && ev >= .03 && edge >= .015 && m.homeHomeWinRate >= .45 -> Verdict.PRUDENT

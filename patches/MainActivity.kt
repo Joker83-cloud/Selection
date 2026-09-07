@@ -5,8 +5,8 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -54,12 +54,12 @@ fun OneStakeApp(store: HistoryStore) {
     Scaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.statusBarsPadding(),
                 title = {
                     Text(
                         "OneStake · Selection AI",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             )
@@ -68,7 +68,11 @@ fun OneStakeApp(store: HistoryStore) {
         Column(Modifier.padding(padding).fillMaxSize()) {
             TabRow(selectedTabIndex = tab) {
                 tabs.forEachIndexed { i, t ->
-                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelMedium) })
+                    Tab(
+                        selected = tab == i,
+                        onClick = { tab = i },
+                        text = { Text(t, style = MaterialTheme.typography.labelMedium) }
+                    )
                 }
             }
             when (tab) {
@@ -82,8 +86,11 @@ fun OneStakeApp(store: HistoryStore) {
                         store.save(history)
                     }
                 )
-                1 -> HistoryScreen(history = history, onChange = { updated -> history = updated; store.save(updated) })
-                2 -> DataScreen(minOdd, maxOdd)
+                1 -> HistoryScreen(
+                    history = history,
+                    onChange = { updated -> history = updated; store.save(updated) }
+                )
+                2 -> DataScreen()
             }
         }
     }
@@ -115,7 +122,7 @@ fun AnalyzeScreen(
             onRangeChange(lo, hi)
             status = "Filtro quota aggiornato: ${lo.fmt2()}–${hi.fmt2()}"
         } else {
-            status = "Filtro quota non valido: imposta minimo < massimo."
+            status = "Filtro quota non valido: minimo < massimo."
         }
     }
 
@@ -148,8 +155,8 @@ fun AnalyzeScreen(
                 val eligible = merged.count { isOneStakeEligible(it, minOdd, maxOdd) }
                 status = when {
                     merged.isEmpty() -> "Nessun match riconosciuto."
-                    eligible == 0 -> "${merged.size} match riconosciuti · nessuna candidata nel filtro ${minOdd.fmt2()}–${maxOdd.fmt2()}."
-                    else -> "$eligible candidate nel filtro ${minOdd.fmt2()}–${maxOdd.fmt2()} · ${merged.size - eligible} nascoste."
+                    eligible == 0 -> "${merged.size} match riconosciuti · nessuna candidata ${minOdd.fmt2()}–${maxOdd.fmt2()}."
+                    else -> "$eligible candidate · ${merged.size - eligible} fuori filtro nascoste."
                 }
                 busy = false
             }
@@ -171,14 +178,14 @@ fun AnalyzeScreen(
 
     val visibleCandidates = candidates.filter { isOneStakeEligible(it, minOdd, maxOdd) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 3.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-            CompactFilterField("Quota min", minText, Modifier.weight(1f)) { minText = it }
-            CompactFilterField("Quota max", maxText, Modifier.weight(1f)) { maxText = it }
+            CompactFilterField("Min", minText, Modifier.weight(1f)) { minText = it }
+            CompactFilterField("Max", maxText, Modifier.weight(1f)) { maxText = it }
             Button(
                 onClick = ::updateRange,
-                modifier = Modifier.height(40.dp),
-                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)
+                modifier = Modifier.height(38.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
             ) { Text("APPLICA", style = MaterialTheme.typography.labelSmall) }
         }
 
@@ -186,10 +193,10 @@ fun AnalyzeScreen(
         Button(
             onClick = { launcher.launch("image/*") },
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth().height(40.dp),
+            modifier = Modifier.fillMaxWidth().height(38.dp),
             contentPadding = PaddingValues(vertical = 0.dp)
         ) {
-            Text(if (busy) "ELABORAZIONE…" else "📷 ALLEGA SCREENSHOT", style = MaterialTheme.typography.labelLarge)
+            Text(if (busy) "ELABORAZIONE…" else "📷 ALLEGA SCREENSHOT", style = MaterialTheme.typography.labelMedium)
         }
 
         if (visibleCandidates.isNotEmpty()) {
@@ -208,17 +215,19 @@ fun AnalyzeScreen(
                             working = working.toMutableList().also { it[index] = scored }
                             candidates = working
                         }
-                        val playable = working.filter { isOneStakeEligible(it, minOdd, maxOdd) && it.verdict != Verdict.NEEDS_DATA }
+                        val playable = working.filter {
+                            isOneStakeEligible(it, minOdd, maxOdd) && it.verdict != Verdict.NEEDS_DATA
+                        }
                         val positive = playable.count { it.verdict != Verdict.PASS }
-                        status = "Analisi completata: $positive da giocare/prudenti su ${validIndices.size} candidate."
+                        status = "Analisi completata: $positive utili su ${validIndices.size} candidate."
                         busy = false
                     }
                 },
                 enabled = !busy,
-                modifier = Modifier.fillMaxWidth().height(40.dp),
+                modifier = Modifier.fillMaxWidth().height(38.dp),
                 contentPadding = PaddingValues(vertical = 0.dp)
             ) {
-                Text("⚡ ANALIZZA TUTTE (${visibleCandidates.size})", style = MaterialTheme.typography.labelLarge)
+                Text("⚡ ANALIZZA TUTTE (${visibleCandidates.size})", style = MaterialTheme.typography.labelMedium)
             }
         }
 
@@ -226,7 +235,7 @@ fun AnalyzeScreen(
         Text(status, style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(2.dp))
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(visibleCandidates, key = { it.id }) { item ->
                 CandidateCard(
                     item = item,
@@ -260,7 +269,7 @@ private fun CompactFilterField(label: String, value: String, modifier: Modifier,
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(40.dp)
+        modifier = modifier.height(38.dp)
     )
 }
 
@@ -278,32 +287,50 @@ fun CandidateCard(
     var o2 by remember(item.id) { mutableStateOf(item.odd2.toString()) }
 
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-            Text("✅ CANDIDATA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+        Column(Modifier.padding(horizontal = 5.dp, vertical = 3.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CompactTextField("Casa", home, Modifier.weight(1f)) { home = it; onEdit(item.copy(home = it)) }
-                CompactTextField("Ospite", away, Modifier.weight(1f)) { away = it; onEdit(item.copy(away = it)) }
+                CompactTextField("Casa", home, Modifier.weight(1f)) {
+                    home = it; onEdit(item.copy(home = it))
+                }
+                CompactTextField("Ospite", away, Modifier.weight(1f)) {
+                    away = it; onEdit(item.copy(away = it))
+                }
             }
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(1.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                OddsField("1", o1, Modifier.weight(1f)) { o1 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd1 = v)) } }
-                OddsField("X", ox, Modifier.weight(1f)) { ox = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(oddX = v)) } }
-                OddsField("2", o2, Modifier.weight(1f)) { o2 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd2 = v)) } }
+                OddsField("1", o1, Modifier.weight(1f)) {
+                    o1 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd1 = v)) }
+                }
+                OddsField("X", ox, Modifier.weight(1f)) {
+                    ox = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(oddX = v)) }
+                }
+                OddsField("2", o2, Modifier.weight(1f)) {
+                    o2 = it; it.replace(',', '.').toDoubleOrNull()?.let { v -> onEdit(item.copy(odd2 = v)) }
+                }
             }
             if (item.verdict != Verdict.NEEDS_DATA) {
-                Spacer(Modifier.height(2.dp))
-                Text("Score ${item.score}/100 · ${item.verdict} · EV ${(item.ev * 100).fmt1()}% · P ${(item.estimatedP * 100).fmt1()}% · Fair ${item.fairOdd.fmt2()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                Text("Classifica ${item.homeRank ?: "?"}ª/${item.awayRank ?: "?"}ª", style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.height(1.dp))
+                Text(
+                    "${item.verdict} · Score ${item.score} · EV ${(item.ev * 100).fmt1()}% · P ${(item.estimatedP * 100).fmt1()}% · Fair ${item.fairOdd.fmt2()} · Cl. ${item.homeRank ?: "?"}/${item.awayRank ?: "?"}",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
-            if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
-            Spacer(Modifier.height(2.dp))
+            if (item.notes.isNotBlank()) {
+                Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
+            }
+            Spacer(Modifier.height(1.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = onAnalyze, modifier = Modifier.weight(1f).height(32.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
-                    Text("ANALIZZA", style = MaterialTheme.typography.labelSmall)
-                }
-                OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f).height(32.dp), contentPadding = PaddingValues(vertical = 0.dp)) {
-                    Text("SALVA", style = MaterialTheme.typography.labelSmall)
-                }
+                Button(
+                    onClick = onAnalyze,
+                    modifier = Modifier.weight(1f).height(30.dp),
+                    contentPadding = PaddingValues(vertical = 0.dp)
+                ) { Text("ANALIZZA", style = MaterialTheme.typography.labelSmall) }
+                OutlinedButton(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f).height(30.dp),
+                    contentPadding = PaddingValues(vertical = 0.dp)
+                ) { Text("SALVA", style = MaterialTheme.typography.labelSmall) }
             }
         }
     }
@@ -317,7 +344,7 @@ private fun CompactTextField(label: String, value: String, modifier: Modifier, o
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(40.dp)
+        modifier = modifier.height(38.dp)
     )
 }
 
@@ -329,7 +356,7 @@ fun OddsField(label: String, value: String, modifier: Modifier, onValue: (String
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(38.dp)
+        modifier = modifier.height(36.dp)
     )
 }
 
@@ -342,8 +369,12 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
     val roi = if (staked == 0.0) 0.0 else profit / staked
 
     Column(Modifier.fillMaxSize().padding(8.dp)) {
-        Text("Casi: ${settled.size} · Vinte: $won · Win ${(if (settled.isEmpty()) 0.0 else won * 100.0 / settled.size).fmt1()}% · ROI ${(roi * 100).fmt1()}%", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
-        Text("Stake virtuale 1 unità. Gli esiti alimentano il campione di calibrazione.", style = MaterialTheme.typography.labelSmall)
+        Text(
+            "Casi: ${settled.size} · Vinte: $won · Win ${(if (settled.isEmpty()) 0.0 else won * 100.0 / settled.size).fmt1()}% · ROI ${(roi * 100).fmt1()}%",
+            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.bodySmall
+        )
+        Text("Stake virtuale 1 unità. Gli esiti alimentano la calibrazione.", style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.height(4.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             itemsIndexed(history.reversed(), key = { _, it -> it.id }) { reverseIndex, item ->
@@ -353,9 +384,21 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
                         Text("${item.home} – ${item.away} · 1 @${item.odd1.fmt2()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                         Text("Score ${item.score} · EV ${(item.ev * 100).fmt1()}% · ${item.verdict}", style = MaterialTheme.typography.labelSmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
-                            Button(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
-                            OutlinedButton(onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) }, modifier = Modifier.height(32.dp), contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp)) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
+                            Button(
+                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.WON) }) },
+                                modifier = Modifier.height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("VINTA", style = MaterialTheme.typography.labelSmall) }
+                            Button(
+                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.LOST) }) },
+                                modifier = Modifier.height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("PERSA", style = MaterialTheme.typography.labelSmall) }
+                            OutlinedButton(
+                                onClick = { onChange(history.toMutableList().also { it[realIndex] = item.copy(result = BetResult.PENDING) }) },
+                                modifier = Modifier.height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            ) { Text("PEND.", style = MaterialTheme.typography.labelSmall) }
                         }
                     }
                 }
@@ -365,11 +408,8 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
 }
 
 @Composable
-fun DataScreen(minOdd: Double, maxOdd: Double) {
+fun DataScreen() {
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        Text("Filtro attivo", fontWeight = FontWeight.Bold)
-        Text("Quota 1: ${minOdd.fmt2()}–${maxOdd.fmt2()} · modificabile solo nella scheda ANALIZZA.", style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(10.dp))
         Text("Valutazione", fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -385,9 +425,12 @@ fun DataScreen(minOdd: Double, maxOdd: Double) {
                 "• se mancano dati basilari: DATI INSUFFICIENTI",
             style = MaterialTheme.typography.bodySmall
         )
-        Spacer(Modifier.height(10.dp))
-        Text("Fonti", fontWeight = FontWeight.Bold)
-        Text("Diretta è la fonte primaria; SofaScore completa i dati quando necessario. Nessuna API key viene letta o usata dall'app.", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(12.dp))
+        Text("Fonti dati", fontWeight = FontWeight.Bold)
+        Text(
+            "Diretta è la fonte primaria; SofaScore completa i dati quando necessario. L'app non richiede né utilizza una API key per le valutazioni.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 

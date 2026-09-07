@@ -14,7 +14,8 @@ class DirettaMobileClient {
         val leagueName: String,
         val standingsUrl: String?,
         val home: String,
-        val away: String
+        val away: String,
+        val dayOffset: Int
     )
 
     data class TeamResult(
@@ -25,15 +26,14 @@ class DirettaMobileClient {
     )
 
     fun enrich(candidate: MatchCandidate, date: String): MatchCandidate {
-        val today = fetchDay(0)
-        val match = findLeagueMatch(today, candidate)
-            ?: return candidate.copy(notes = mergeNote(candidate.notes, "Diretta: partita non identificata nella pagina mobile di oggi"))
+        val match = findMatchAcrossDays(candidate)
+            ?: return candidate.copy(notes = mergeNote(candidate.notes, "Diretta: partita non identificata tra oggi e i prossimi 7 giorni"))
 
         var homeRank: Int? = null
         var awayRank: Int? = null
         match.standingsUrl?.let { url ->
-            runCatching { fetchAbsolute(url) }.getOrNull()?.let { standingsHtml ->
-                val rows = parseStandings(standingsHtml)
+            runCatching { fetchAbsolute(url) }.getOrNull()?.let { html ->
+                val rows = parseStandings(html)
                 homeRank = findRank(rows, candidate.home)
                 awayRank = findRank(rows, candidate.away)
             }
@@ -46,14 +46,13 @@ class DirettaMobileClient {
         var awayGamesAway = 0
         var awayLossesAway = 0
 
-        for (d in 1..45) {
+        for (d in 1..60) {
             val html = runCatching { fetchDay(-d) }.getOrNull() ?: continue
-            val results = parseFinishedResults(html)
-            for (r in results) {
-                val homeIsHome = similarity(candidate.home, r.home) >= 0.78
-                val homeIsAway = similarity(candidate.home, r.away) >= 0.78
-                val awayIsHome = similarity(candidate.away, r.home) >= 0.78
-                val awayIsAway = similarity(candidate.away, r.away) >= 0.78
+            for (r in parseFinishedResults(html)) {
+                val homeIsHome = similarity(candidate.home, r.home) >= 0.76
+                val homeIsAway = similarity(candidate.home, r.away) >= 0.76
+                val awayIsHome = similarity(candidate.away, r.home) >= 0.76
+                val awayIsAway = similarity(candidate.away, r.away) >= 0.76
 
                 if ((homeIsHome || homeIsAway) && recentHome.size < 5) {
                     val gf = if (homeIsHome) r.homeGoals else r.awayGoals
@@ -64,6 +63,7 @@ class DirettaMobileClient {
                         else -> 0
                     }
                 }
+
                 if ((awayIsHome || awayIsAway) && recentAway.size < 5) {
                     val gf = if (awayIsHome) r.homeGoals else r.awayGoals
                     val ga = if (awayIsHome) r.awayGoals else r.homeGoals
@@ -83,6 +83,7 @@ class DirettaMobileClient {
                     if (r.awayGoals < r.homeGoals) awayLossesAway++
                 }
             }
+
             if (recentHome.size >= 5 && recentAway.size >= 5 && homeGamesAtHome >= 3 && awayGamesAway >= 3) break
         }
 
@@ -103,9 +104,9 @@ class DirettaMobileClient {
         val syntheticFixtureId = -kotlin.math.abs((candidate.home + "|" + candidate.away + "|" + date).hashCode()).coerceAtLeast(1)
 
         val note = if (missing.isEmpty()) {
-            "Diretta mobile · ${match.leagueName} · classifica, ultime 5 e casa/trasferta recuperati"
+            "Diretta · ${match.leagueName} · classifica, ultime 5 e casa/trasferta recuperati"
         } else {
-            "Diretta mobile · ${match.leagueName} · mancanti: ${missing.distinct().joinToString(", ")}"
+            "Diretta · ${match.leagueName} · mancanti: ${missing.distinct().joinToString(", ")}"
         }
 
         return candidate.copy(
@@ -125,11 +126,26 @@ class DirettaMobileClient {
         )
     }
 
-    private fun fetchDay(offset: Int): String {
-        val path = when {
-            offset == 0 -> "/"
-            else -> "/?d=$offset"
+    private fun findMatchAcrossDays(candidate: MatchCandidate): LeagueMatch? {
+        val offsets = listOf(0, 1, 2, 3, 4, 5, 6, 7, -1, -2)
+        var best: LeagueMatch? = null
+        var bestScore = 0.0
+
+        for (offset in offsets) {
+            val html = runCatching { fetchDay(offset) }.getOrNull() ?: continue
+            val found = findLeagueMatch(html, candidate, offset) ?: continue
+            val score = (similarity(candidate.home, found.home) + similarity(candidate.away, found.away)) / 2.0
+            if (score > bestScore) {
+                best = found
+                bestScore = score
+            }
+            if (bestScore >= 0.90) break
         }
+        return best?.takeIf { bestScore >= 0.74 }
+    }
+
+    private fun fetchDay(offset: Int): String {
+        val path = if (offset == 0) "/" else "/?d=$offset"
         return cache.computeIfAbsent(path) { fetchAbsolute(base + it) }
     }
 
@@ -139,7 +155,7 @@ class DirettaMobileClient {
         conn.connectTimeout = 10000
         conn.readTimeout = 10000
         conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/0.8")
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/0.9")
         conn.setRequestProperty("Accept", "text/html,application/xhtml+xml")
         return try {
             val code = conn.responseCode
@@ -150,28 +166,30 @@ class DirettaMobileClient {
         }
     }
 
-    private fun findLeagueMatch(html: String, c: MatchCandidate): LeagueMatch? {
+    private fun findLeagueMatch(html: String, c: MatchCandidate, offset: Int): LeagueMatch? {
         val blockRegex = Regex("(?is)<h4[^>]*>(.*?)</h4>(.*?)(?=<h4|$)")
         var best: LeagueMatch? = null
         var bestScore = 0.0
+
         for (m in blockRegex.findAll(html)) {
             val headerHtml = m.groupValues[1]
             val bodyHtml = m.groupValues[2]
             val league = cleanText(headerHtml).replace("Classifiche", "").trim()
             val standingsHref = Regex("(?is)href=[\"']([^\"']+)[\"'][^>]*>\\s*Classifiche").find(headerHtml)?.groupValues?.get(1)
             val standingsUrl = standingsHref?.let { if (it.startsWith("http")) it else base + if (it.startsWith("/")) it else "/$it" }
+
             for (line in htmlToLines(bodyHtml)) {
                 val fixture = parseFixtureLine(line) ?: continue
                 val hs = similarity(c.home, fixture.first)
                 val ascore = similarity(c.away, fixture.second)
                 val score = (hs + ascore) / 2.0
-                if (hs >= 0.70 && ascore >= 0.70 && score > bestScore) {
+                if (hs >= 0.68 && ascore >= 0.68 && score > bestScore) {
                     bestScore = score
-                    best = LeagueMatch(league, standingsUrl, fixture.first, fixture.second)
+                    best = LeagueMatch(league, standingsUrl, fixture.first, fixture.second, offset)
                 }
             }
         }
-        return best?.takeIf { bestScore >= 0.74 }
+        return best?.takeIf { bestScore >= 0.72 }
     }
 
     private fun parseStandings(html: String): List<Pair<String, Int>> {
@@ -196,13 +214,15 @@ class DirettaMobileClient {
     }
 
     private fun findRank(rows: List<Pair<String, Int>>, team: String): Int? =
-        rows.maxByOrNull { similarity(team, it.first) }?.takeIf { similarity(team, it.first) >= 0.72 }?.second
+        rows.maxByOrNull { similarity(team, it.first) }
+            ?.takeIf { similarity(team, it.first) >= 0.70 }
+            ?.second
 
     private fun parseFinishedResults(html: String): List<TeamResult> {
         val out = mutableListOf<TeamResult>()
         val scoreRegex = Regex("^(.*?\\S)\\s+-\\s+(.*?\\S)\\s+(\\d{1,2})-(\\d{1,2})(?:\\s.*)?$")
         for (raw in htmlToLines(html)) {
-            var line = raw
+            val line = raw
                 .replace("Image", " ")
                 .replace(Regex("^\\d{1,2}:\\d{2}\\s+"), "")
                 .replace(Regex("^(?:Intervallo|Finale|Posticipata|Sospesa)\\s+", RegexOption.IGNORE_CASE), "")
@@ -219,7 +239,7 @@ class DirettaMobileClient {
     }
 
     private fun parseFixtureLine(raw: String): Pair<String, String>? {
-        var line = raw
+        val line = raw
             .replace("Image", " ")
             .replace(Regex("^\\d{1,2}:\\d{2}\\s+"), "")
             .replace(Regex("^(?:Intervallo|Finale|Posticipata|Sospesa)\\s+", RegexOption.IGNORE_CASE), "")
@@ -238,8 +258,7 @@ class DirettaMobileClient {
         val prepared = html
             .replace(Regex("(?is)<br\\s*/?>"), "\n")
             .replace(Regex("(?is)</(?:div|p|li|tr|h[1-6])>"), "\n")
-        return prepared
-            .split('\n')
+        return prepared.split('\n')
             .map { cleanText(it) }
             .map { it.replace(Regex("\\s+"), " ").trim() }
             .filter { it.isNotBlank() }

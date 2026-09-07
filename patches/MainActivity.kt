@@ -34,10 +34,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OneStakeApp(store: HistoryStore) {
     var tab by remember { mutableIntStateOf(0) }
-    var apiKey by remember { mutableStateOf(store.apiKey()) }
     var history by remember { mutableStateOf(store.load()) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val prefs = remember { context.getSharedPreferences("onestake_selection_ui", Context.MODE_PRIVATE) }
@@ -51,37 +51,33 @@ fun OneStakeApp(store: HistoryStore) {
         prefs.edit().putFloat("min_odd", min.toFloat()).putFloat("max_odd", max.toFloat()).apply()
     }
 
-    Column(Modifier.fillMaxSize().padding(top = 4.dp)) {
-        Text(
-            "OneStake · Selection AI",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-        )
-        TabRow(selectedTabIndex = tab) {
-            tabs.forEachIndexed { i, t ->
-                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelMedium) })
-            }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("OneStake · Selection AI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            )
         }
-        when (tab) {
-            0 -> AnalyzeScreen(
-                apiKey = apiKey,
-                history = history,
-                minOdd = minOdd,
-                maxOdd = maxOdd,
-                onRangeChange = ::saveRange,
-                onSaved = { item ->
-                    history = (history + item).takeLast(500)
-                    store.save(history)
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            TabRow(selectedTabIndex = tab) {
+                tabs.forEachIndexed { i, t ->
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, style = MaterialTheme.typography.labelMedium) })
                 }
-            )
-            1 -> HistoryScreen(history = history, onChange = { updated -> history = updated; store.save(updated) })
-            2 -> SettingsScreen(
-                apiKey = apiKey,
-                minOdd = minOdd,
-                maxOdd = maxOdd,
-                onApiKey = { apiKey = it; store.setApiKey(it) },
-                onRangeChange = ::saveRange
-            )
+            }
+            when (tab) {
+                0 -> AnalyzeScreen(
+                    history = history,
+                    minOdd = minOdd,
+                    maxOdd = maxOdd,
+                    onRangeChange = ::saveRange,
+                    onSaved = { item ->
+                        history = (history + item).takeLast(500)
+                        store.save(history)
+                    }
+                )
+                1 -> HistoryScreen(history = history, onChange = { updated -> history = updated; store.save(updated) })
+                2 -> DataScreen()
+            }
         }
     }
 }
@@ -91,7 +87,6 @@ private fun isOneStakeEligible(item: MatchCandidate, minOdd: Double, maxOdd: Dou
 
 @Composable
 fun AnalyzeScreen(
-    apiKey: String,
     history: List<MatchCandidate>,
     minOdd: Double,
     maxOdd: Double,
@@ -121,9 +116,9 @@ fun AnalyzeScreen(
         val enriched = withContext(Dispatchers.IO) {
             try {
                 val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                ApiFootballClient(apiKey).enrich(item, date)
+                HybridFootballClient("").enrich(item, date)
             } catch (e: Exception) {
-                item.copy(notes = "API: ${e.message}")
+                item.copy(notes = "Dati: ${e.message}")
             }
         }
         return AdaptiveCalibrator.calibrate(ScoringEngine.score(enriched, minOdd, maxOdd), history)
@@ -175,8 +170,8 @@ fun AnalyzeScreen(
             CompactFilterField("Quota max", maxText, Modifier.weight(1f)) { maxText = it }
             Button(
                 onClick = ::updateRange,
-                modifier = Modifier.height(44.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                modifier = Modifier.height(42.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
             ) { Text("APPLICA", style = MaterialTheme.typography.labelSmall) }
         }
 
@@ -184,7 +179,7 @@ fun AnalyzeScreen(
         Button(
             onClick = { launcher.launch("image/*") },
             enabled = !busy,
-            modifier = Modifier.fillMaxWidth().height(44.dp),
+            modifier = Modifier.fillMaxWidth().height(42.dp),
             contentPadding = PaddingValues(vertical = 0.dp)
         ) {
             Text(if (busy) "ELABORAZIONE…" else "📷 ALLEGA SCREENSHOT", style = MaterialTheme.typography.labelLarge)
@@ -195,16 +190,8 @@ fun AnalyzeScreen(
             Button(
                 onClick = {
                     scope.launch {
-                        if (apiKey.isBlank()) {
-                            status = "Inserisci prima la API key nella scheda DATI."
-                            return@launch
-                        }
                         val ids = visibleCandidates.map { it.id }.toSet()
                         val validIndices = candidates.indices.filter { candidates[it].id in ids }
-                        if (validIndices.isEmpty()) {
-                            status = "Nessuna partita nel filtro quota."
-                            return@launch
-                        }
                         busy = true
                         var working = candidates
                         validIndices.forEachIndexed { pos, index ->
@@ -221,10 +208,10 @@ fun AnalyzeScreen(
                     }
                 },
                 enabled = !busy,
-                modifier = Modifier.fillMaxWidth().height(44.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp),
                 contentPadding = PaddingValues(vertical = 0.dp)
             ) {
-                Text(if (apiKey.isBlank()) "🔑 INSERISCI API KEY" else "⚡ ANALIZZA TUTTE (${visibleCandidates.size})", style = MaterialTheme.typography.labelLarge)
+                Text("⚡ ANALIZZA TUTTE (${visibleCandidates.size})", style = MaterialTheme.typography.labelLarge)
             }
         }
 
@@ -236,7 +223,6 @@ fun AnalyzeScreen(
             items(visibleCandidates, key = { it.id }) { item ->
                 CandidateCard(
                     item = item,
-                    apiEnabled = apiKey.isNotBlank(),
                     onEdit = { changed ->
                         val index = candidates.indexOfFirst { it.id == item.id }
                         if (index >= 0) candidates = candidates.toMutableList().also { it[index] = changed }
@@ -267,14 +253,13 @@ private fun CompactFilterField(label: String, value: String, modifier: Modifier,
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(44.dp)
+        modifier = modifier.height(42.dp)
     )
 }
 
 @Composable
 fun CandidateCard(
     item: MatchCandidate,
-    apiEnabled: Boolean,
     onEdit: (MatchCandidate) -> Unit,
     onAnalyze: () -> Unit,
     onSave: () -> Unit
@@ -286,7 +271,7 @@ fun CandidateCard(
     var o2 by remember(item.id) { mutableStateOf(item.odd2.toString()) }
 
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 5.dp)) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
             Text("✅ CANDIDATA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 CompactTextField("Casa", home, Modifier.weight(1f)) { home = it; onEdit(item.copy(home = it)) }
@@ -303,18 +288,17 @@ fun CandidateCard(
                 Text("Score ${item.score}/100 · ${item.verdict} · EV ${(item.ev * 100).fmt1()}% · P ${(item.estimatedP * 100).fmt1()}% · Fair ${item.fairOdd.fmt2()}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                 Text("Classifica ${item.homeRank ?: "?"}ª/${item.awayRank ?: "?"}ª", style = MaterialTheme.typography.labelSmall)
             }
-            if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 3)
+            if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.labelSmall, maxLines = 2)
             Spacer(Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(
                     onClick = onAnalyze,
-                    enabled = apiEnabled,
-                    modifier = Modifier.weight(1f).height(36.dp),
+                    modifier = Modifier.weight(1f).height(34.dp),
                     contentPadding = PaddingValues(vertical = 0.dp)
-                ) { Text(if (apiEnabled) "ANALIZZA" else "API KEY", style = MaterialTheme.typography.labelSmall) }
+                ) { Text("ANALIZZA", style = MaterialTheme.typography.labelSmall) }
                 OutlinedButton(
                     onClick = onSave,
-                    modifier = Modifier.weight(1f).height(36.dp),
+                    modifier = Modifier.weight(1f).height(34.dp),
                     contentPadding = PaddingValues(vertical = 0.dp)
                 ) { Text("SALVA", style = MaterialTheme.typography.labelSmall) }
             }
@@ -330,7 +314,7 @@ private fun CompactTextField(label: String, value: String, modifier: Modifier, o
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(44.dp)
+        modifier = modifier.height(42.dp)
     )
 }
 
@@ -342,7 +326,7 @@ fun OddsField(label: String, value: String, modifier: Modifier, onValue: (String
         label = { Text(label, style = MaterialTheme.typography.labelSmall) },
         singleLine = true,
         textStyle = MaterialTheme.typography.bodySmall,
-        modifier = modifier.height(42.dp)
+        modifier = modifier.height(40.dp)
     )
 }
 
@@ -378,38 +362,10 @@ fun HistoryScreen(history: List<MatchCandidate>, onChange: (List<MatchCandidate>
 }
 
 @Composable
-fun SettingsScreen(
-    apiKey: String,
-    minOdd: Double,
-    maxOdd: Double,
-    onApiKey: (String) -> Unit,
-    onRangeChange: (Double, Double) -> Unit
-) {
-    var key by remember(apiKey) { mutableStateOf(apiKey) }
-    var minText by remember(minOdd) { mutableStateOf(minOdd.fmt2()) }
-    var maxText by remember(maxOdd) { mutableStateOf(maxOdd.fmt2()) }
+fun DataScreen() {
     Column(Modifier.fillMaxSize().padding(12.dp)) {
-        Text("Filtro quota 1", fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            CompactFilterField("Min", minText, Modifier.weight(1f)) { minText = it }
-            CompactFilterField("Max", maxText, Modifier.weight(1f)) { maxText = it }
-        }
-        Spacer(Modifier.height(4.dp))
-        Button(onClick = {
-            val lo = minText.replace(',', '.').toDoubleOrNull()
-            val hi = maxText.replace(',', '.').toDoubleOrNull()
-            if (lo != null && hi != null && lo > 1.0 && hi > lo && hi <= 10.0) onRangeChange(lo, hi)
-        }, modifier = Modifier.fillMaxWidth().height(40.dp)) { Text("SALVA FILTRO") }
-
-        Spacer(Modifier.height(10.dp))
-        Text("Dati calcistici", fontWeight = FontWeight.Bold)
-        Text("La chiave resta salvata solo sul dispositivo.", style = MaterialTheme.typography.labelSmall)
-        OutlinedTextField(value = key, onValueChange = { key = it }, label = { Text("API key") }, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(4.dp))
-        Button(onClick = { onApiKey(key) }, modifier = Modifier.fillMaxWidth().height(40.dp)) { Text("SALVA API KEY") }
-
-        Spacer(Modifier.height(10.dp))
         Text("Valutazione", fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
         Text(
             "• classifica generale\n" +
                 "• rendimento della squadra di casa in casa\n" +
@@ -423,6 +379,9 @@ fun SettingsScreen(
                 "• se mancano dati basilari: DATI INSUFFICIENTI",
             style = MaterialTheme.typography.bodySmall
         )
+        Spacer(Modifier.height(10.dp))
+        Text("Fonti", fontWeight = FontWeight.Bold)
+        Text("Diretta è la fonte primaria; SofaScore viene usato solo come fallback per completare dati mancanti. Nessuna API key è richiesta.", style = MaterialTheme.typography.bodySmall)
     }
 }
 

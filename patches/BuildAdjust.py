@@ -56,12 +56,12 @@ main_path.write_text(s)
 
 # Force the custom launcher icon even if the original manifest has no icon attribute.
 m = manifest_path.read_text()
-app = re.search(r"<application\\b[^>]*>", m, flags=re.S)
+app = re.search(r"<application\b[^>]*>", m, flags=re.S)
 if not app:
     raise SystemExit("application tag not found")
 tag = app.group(0)
-tag = re.sub(r"\\s+android:icon=\"[^\"]+\"", "", tag)
-tag = re.sub(r"\\s+android:roundIcon=\"[^\"]+\"", "", tag)
+tag = re.sub(r"\s+android:icon=\"[^\"]+\"", "", tag)
+tag = re.sub(r"\s+android:roundIcon=\"[^\"]+\"", "", tag)
 tag = tag[:-1] + "\n        android:icon=\"@drawable/ic_onestake\"\n        android:roundIcon=\"@drawable/ic_onestake\">"
 m = m[:app.start()] + tag + m[app.end():]
 manifest_path.write_text(m)

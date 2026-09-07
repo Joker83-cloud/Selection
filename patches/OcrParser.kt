@@ -9,6 +9,7 @@ object OcrParser {
     private val marketLabelRegex = Regex("(?i)^(1|x|2)$")
     private val plusRegex = Regex("^\\+\\s*\\d*$")
     private val leagueRegex = Regex("^[A-Z]{3}\\s+.*")
+    private val youthRegex = Regex("(?i)\\b(U(?:17|18|19|20|21|23))\\b")
 
     private data class Token(
         val text: String,
@@ -43,8 +44,6 @@ object OcrParser {
         val timeLines = lineTokens.filter { timeRegex.matches(it.text) }.sortedBy { it.cy }
         val maxRight = lineTokens.maxOfOrNull { it.right } ?: 1000
 
-        // Preferred parser for the bookmaker layout: every event card contains one time line,
-        // two team-name lines on the left and three decimal odds in the right half.
         if (timeLines.isNotEmpty() && elementTokens.isNotEmpty()) {
             val out = mutableListOf<MatchCandidate>()
 
@@ -68,8 +67,6 @@ object OcrParser {
 
                 if (odds.size < 3) return@forEachIndexed
 
-                // Keep one price per 1/X/2 horizontal column. If OCR duplicated a price,
-                // collapse elements that are almost on top of each other.
                 val distinctOdds = mutableListOf<Pair<Token, Double>>()
                 odds.forEach { item ->
                     if (distinctOdds.none { abs(it.first.cx - item.first.cx) < 28 }) distinctOdds += item
@@ -86,10 +83,10 @@ object OcrParser {
 
                 if (names.size < 2) return@forEachIndexed
 
-                // In each card the last two valid text lines before the time are Home and Away.
                 val chosen = names.takeLast(2)
-                val home = cleanTeam(chosen[0].text)
-                val away = cleanTeam(chosen[1].text)
+                val pair = harmonizeCategory(cleanTeam(chosen[0].text), cleanTeam(chosen[1].text))
+                val home = pair.first
+                val away = pair.second
                 if (home.isBlank() || away.isBlank() || home.equals(away, true)) return@forEachIndexed
 
                 out += MatchCandidate(
@@ -107,7 +104,6 @@ object OcrParser {
             if (clean.isNotEmpty()) return clean
         }
 
-        // Secondary spatial parser for screenshots where the time label is not detected.
         if (elementTokens.isNotEmpty()) {
             val oddTokens = elementTokens.mapNotNull { t ->
                 val m = oddRegex.find(t.text) ?: return@mapNotNull null
@@ -143,9 +139,10 @@ object OcrParser {
                         .takeLast(2)
                     if (names.size < 2) return@forEach
 
+                    val pair = harmonizeCategory(cleanTeam(names[0].text), cleanTeam(names[1].text))
                     out += MatchCandidate(
-                        home = cleanTeam(names[0].text),
-                        away = cleanTeam(names[1].text),
+                        home = pair.first,
+                        away = pair.second,
                         odd1 = triple[0].second,
                         oddX = triple[1].second,
                         odd2 = triple[2].second
@@ -186,9 +183,10 @@ object OcrParser {
                 .take(3)
 
             if (odds.size == 3) {
+                val pair = harmonizeCategory(cleanTeam(names[0]), cleanTeam(names[1]))
                 out += MatchCandidate(
-                    home = cleanTeam(names[0]),
-                    away = cleanTeam(names[1]),
+                    home = pair.first,
+                    away = pair.second,
                     odd1 = odds[0],
                     oddX = odds[1],
                     odd2 = odds[2]
@@ -199,6 +197,18 @@ object OcrParser {
         return out.distinctBy {
             "${it.home.lowercase()}|${it.away.lowercase()}|${it.odd1}|${it.oddX}|${it.odd2}"
         }
+    }
+
+    private fun harmonizeCategory(home: String, away: String): Pair<String, String> {
+        val homeCat = youthRegex.find(home)?.groupValues?.get(1)?.uppercase()
+        val awayCat = youthRegex.find(away)?.groupValues?.get(1)?.uppercase()
+        val category = homeCat ?: awayCat ?: return home to away
+
+        fun ensure(team: String, ownCat: String?): String = when {
+            ownCat != null -> team
+            else -> "$team $category".replace(Regex("\\s+"), " ").trim()
+        }
+        return ensure(home, homeCat) to ensure(away, awayCat)
     }
 
     private fun isTeamCandidate(s: String): Boolean {

@@ -74,7 +74,7 @@ private class SofascoreFallbackClient {
                 .distinctBy { it.id }
                 .filter { teamMatches(candidate.home, it.home) || teamMatches(candidate.home, it.away) }
                 .maxByOrNull { opponentSimilarity(candidate, it) }
-                ?.takeIf { opponentSimilarity(candidate, it) >= 0.58 && categoryCompatible(candidate.away, opponentName(candidate, it)) }
+                ?.takeIf { opponentSimilarity(candidate, it) >= 0.52 && categoryCompatible(candidate.away, opponentName(candidate, it)) }
 
             if (directEvent != null) {
                 val opponentIsAway = teamMatches(candidate.home, directEvent.home)
@@ -98,6 +98,15 @@ private class SofascoreFallbackClient {
         var homeId = candidate.homeTeamId
         var awayId = candidate.awayTeamId
 
+        var referenceEvent = directEvent
+        if (referenceEvent == null && !candidate.leagueName.isNullOrBlank()) {
+            referenceEvent = (homeNext + homeLast + awayLast)
+                .distinctBy { it.id }
+                .filter { it.uniqueTournamentId != null && it.seasonId != null && !it.tournamentName.isNullOrBlank() }
+                .maxByOrNull { similarity(candidate.leagueName ?: "", it.tournamentName ?: "") }
+                ?.takeIf { similarity(candidate.leagueName ?: "", it.tournamentName ?: "") >= 0.45 }
+        }
+
         if (directEvent != null) {
             fixtureId = directEvent.id.takeIf { it > 0 } ?: fixtureId
             leagueName = directEvent.tournamentName ?: leagueName
@@ -105,12 +114,15 @@ private class SofascoreFallbackClient {
             season = directEvent.seasonId ?: season
             homeId = directEvent.homeId.takeIf { it > 0 } ?: homeTeam.id
             awayId = directEvent.awayId.takeIf { it > 0 } ?: awayTeam.id
+        }
 
-            if ((homeRank == null || awayRank == null) && directEvent.uniqueTournamentId != null && directEvent.seasonId != null) {
-                val ranks = loadStandings(directEvent.uniqueTournamentId, directEvent.seasonId)
-                if (homeRank == null) homeRank = findRank(candidate.home, ranks)
-                if (awayRank == null) awayRank = findRank(awayTeam.name, ranks)
-            }
+        if ((homeRank == null || awayRank == null) && referenceEvent?.uniqueTournamentId != null && referenceEvent.seasonId != null) {
+            val ranks = loadStandings(referenceEvent.uniqueTournamentId, referenceEvent.seasonId)
+            if (homeRank == null) homeRank = findRank(candidate.home, ranks)
+            if (awayRank == null) awayRank = findRank(awayTeam.name, ranks)
+            if (leagueName.isNullOrBlank()) leagueName = referenceEvent.tournamentName
+            if (leagueId == null) leagueId = referenceEvent.uniqueTournamentId
+            if (season == null) season = referenceEvent.seasonId
         }
 
         var homePts = candidate.homeFormPoints5
@@ -118,9 +130,9 @@ private class SofascoreFallbackClient {
         var homeRate = candidate.homeHomeWinRate
         var awayLossRate = candidate.awayAwayLossRate
 
-        if (homePts == null) homePts = pointsLastFive(candidate.home, homeLast)
+        if (homePts == null) homePts = pointsLastFive(homeTeam.name, homeLast)
         if (awayPts == null) awayPts = pointsLastFive(awayTeam.name, awayLast)
-        if (homeRate == null) homeRate = homeWinRate(candidate.home, homeLast)
+        if (homeRate == null) homeRate = homeWinRate(homeTeam.name, homeLast)
         if (awayLossRate == null) awayLossRate = awayLossRate(awayTeam.name, awayLast)
 
         val syntheticFixture = fixtureId ?: -abs((candidate.home + "|" + candidate.away + "|" + date).hashCode()).coerceAtLeast(1)
@@ -135,9 +147,9 @@ private class SofascoreFallbackClient {
 
         val aliasNote = if (!teamMatches(candidate.away, awayTeam.name)) " · ospite riconosciuta come ${awayTeam.name}" else ""
         val note = if (missing.isEmpty()) {
-            "Fallback SofaScore · partita identificata · dati completi$aliasNote"
+            "Fallback SofaScore esteso · partita identificata · dati completi$aliasNote"
         } else {
-            "Fallback SofaScore · mancanti: ${missing.distinct().joinToString(", ")}$aliasNote"
+            "Fallback SofaScore esteso · mancanti: ${missing.distinct().joinToString(", ")}$aliasNote"
         }
 
         return candidate.copy(
@@ -177,7 +189,6 @@ private class SofascoreFallbackClient {
         val results = json.optJSONArray("results") ?: return null
         var best: TeamHit? = null
         var bestScore = 0.0
-
         for (i in 0 until results.length()) {
             val item = results.optJSONObject(i) ?: continue
             val type = item.optString("type", "")
@@ -190,19 +201,15 @@ private class SofascoreFallbackClient {
             val sport = entity.optJSONObject("sport")?.optString("name", "") ?: ""
             if (sport.isNotBlank() && !sport.equals("football", true) && !sport.equals("calcio", true)) continue
             val score = similarity(expected, name)
-            if (score > bestScore) {
-                bestScore = score
-                best = TeamHit(id, name)
-            }
+            if (score > bestScore) { bestScore = score; best = TeamHit(id, name) }
         }
         return best?.takeIf { bestScore >= 0.68 }
     }
 
     private fun findTeamEnhanced(expected: String): TeamHit? {
-        val queries = linkedSetOf(expected, canonical(expected), alias(expected)).filter { it.isNotBlank() }
+        val queries = searchVariants(expected)
         var best: TeamHit? = null
         var bestScore = 0.0
-
         for (query in queries) {
             val q = URLEncoder.encode(query, "UTF-8")
             val json = runCatching { JSONObject(fetch("$base/search/all?q=$q")) }.getOrNull() ?: continue
@@ -219,13 +226,23 @@ private class SofascoreFallbackClient {
                 val sport = entity.optJSONObject("sport")?.optString("name", "") ?: ""
                 if (sport.isNotBlank() && !sport.equals("football", true) && !sport.equals("calcio", true)) continue
                 val score = similarity(canonical(expected), canonical(name))
-                if (score > bestScore) {
-                    bestScore = score
-                    best = TeamHit(id, name)
-                }
+                if (score > bestScore) { bestScore = score; best = TeamHit(id, name) }
             }
         }
-        return best?.takeIf { bestScore >= 0.58 }
+        return best?.takeIf { bestScore >= 0.52 }
+    }
+
+    private fun searchVariants(name: String): Set<String> {
+        val youth = youthCategory(name)
+        val c = canonical(name)
+        val noAl = c.replace(Regex("(?i)\\bal\\b"), " ").replace(Regex("\\s+"), " ").trim()
+        val noSuffix = c.replace(Regex("(?i)\\b(as|ssc|fk|sk|ks|club|sport|sporting|united|city)\\b"), " ").replace(Regex("\\s+"), " ").trim()
+        val short = c.split(' ').filter { it.length > 2 && !it.matches(Regex("(?i)U\\d+")) }.take(2).joinToString(" ")
+        val out = linkedSetOf(name, c, alias(name), noAl, noSuffix, short)
+        if (youth != null) {
+            listOf(noAl, noSuffix, short).filter { it.isNotBlank() }.forEach { out += "$it $youth" }
+        }
+        return out.filter { it.isNotBlank() }.toSet()
     }
 
     private fun alias(name: String): String {
@@ -245,11 +262,11 @@ private class SofascoreFallbackClient {
 
     private fun loadEvents(teamId: Int, mode: String): List<Event> {
         val out = mutableListOf<Event>()
-        for (page in 0..1) {
+        for (page in 0..3) {
             val json = runCatching { JSONObject(fetch("$base/team/$teamId/events/$mode/$page")) }.getOrNull() ?: continue
             val arr = json.optJSONArray("events") ?: continue
             parseEvents(arr, out)
-            if (out.size >= 15 || !json.optBoolean("hasNextPage", false)) break
+            if (out.size >= 30 || !json.optBoolean("hasNextPage", false)) break
         }
         return out
     }
@@ -268,11 +285,8 @@ private class SofascoreFallbackClient {
             val status = e.optJSONObject("status")?.optString("type", "") ?: ""
             val finished = status.equals("finished", true)
             out += Event(
-                id = e.optInt("id", 0),
-                home = home,
-                away = away,
-                homeId = homeObj.optInt("id", 0),
-                awayId = awayObj.optInt("id", 0),
+                id = e.optInt("id", 0), home = home, away = away,
+                homeId = homeObj.optInt("id", 0), awayId = awayObj.optInt("id", 0),
                 homeGoals = if (finished) scoreValue(e.optJSONObject("homeScore")) else null,
                 awayGoals = if (finished) scoreValue(e.optJSONObject("awayScore")) else null,
                 uniqueTournamentId = uniqueTournament?.optInt("id", 0)?.takeIf { it > 0 },
@@ -303,14 +317,12 @@ private class SofascoreFallbackClient {
     private fun findRank(team: String, rows: List<Pair<String, Int>>): Int? = rows
         .filter { categoryCompatible(team, it.first) }
         .maxByOrNull { similarity(canonical(team), canonical(it.first)) }
-        ?.takeIf { similarity(canonical(team), canonical(it.first)) >= 0.58 }
+        ?.takeIf { similarity(canonical(team), canonical(it.first)) >= 0.52 }
         ?.second
 
     private fun scoreValue(obj: JSONObject?): Int? {
         if (obj == null) return null
-        for (key in listOf("normaltime", "current", "display")) {
-            if (obj.has(key) && !obj.isNull(key)) return obj.optInt(key)
-        }
+        for (key in listOf("normaltime", "current", "display")) if (obj.has(key) && !obj.isNull(key)) return obj.optInt(key)
         return null
     }
 
@@ -331,65 +343,49 @@ private class SofascoreFallbackClient {
     }
 
     private fun homeWinRate(team: String, events: List<Event>): Double? {
-        var games = 0
-        var wins = 0
+        var games = 0; var wins = 0
         for (e in events) {
             val hg = e.homeGoals ?: continue
             val ag = e.awayGoals ?: continue
             if (!teamMatches(team, e.home)) continue
-            games++
-            if (hg > ag) wins++
+            games++; if (hg > ag) wins++
         }
         return if (games > 0) wins.toDouble() / games else null
     }
 
     private fun awayLossRate(team: String, events: List<Event>): Double? {
-        var games = 0
-        var losses = 0
+        var games = 0; var losses = 0
         for (e in events) {
             val hg = e.homeGoals ?: continue
             val ag = e.awayGoals ?: continue
             if (!teamMatches(team, e.away)) continue
-            games++
-            if (ag < hg) losses++
+            games++; if (ag < hg) losses++
         }
         return if (games > 0) losses.toDouble() / games else null
     }
 
     private fun fetch(url: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.connectTimeout = 10000
-        conn.readTimeout = 10000
-        conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/1.6")
+        conn.requestMethod = "GET"; conn.connectTimeout = 10000; conn.readTimeout = 10000; conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/1.7")
         conn.setRequestProperty("Accept", "application/json")
         try {
             val code = conn.responseCode
             if (code !in 200..299) throw IllegalStateException("SofaScore HTTP $code")
             return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
+        } finally { conn.disconnect() }
     }
 
-    private fun youthCategory(name: String): String? =
-        Regex("(?i)\\bU(1[5-9]|2[0-3])\\b").find(name)?.value?.uppercase(Locale.ROOT)
-
-    private fun categoryCompatible(expected: String, actual: String): Boolean =
-        youthCategory(expected) == youthCategory(actual)
-
-    private fun teamMatches(expected: String, actual: String): Boolean =
-        categoryCompatible(expected, actual) && similarity(canonical(expected), canonical(actual)) >= 0.58
+    private fun youthCategory(name: String): String? = Regex("(?i)\\bU(1[5-9]|2[0-3])\\b").find(name)?.value?.uppercase(Locale.ROOT)
+    private fun categoryCompatible(expected: String, actual: String): Boolean = youthCategory(expected) == youthCategory(actual)
+    private fun teamMatches(expected: String, actual: String): Boolean = categoryCompatible(expected, actual) && similarity(canonical(expected), canonical(actual)) >= 0.52
 
     private fun similarity(a: String, b: String): Double {
-        val x = normalize(a)
-        val y = normalize(b)
+        val x = normalize(a); val y = normalize(b)
         if (x.isBlank() || y.isBlank()) return 0.0
         if (x == y) return 1.0
         if (x.contains(y) || y.contains(x)) return 0.94
-        val xa = x.split(' ').filter { it.length > 1 }.toSet()
-        val ya = y.split(' ').filter { it.length > 1 }.toSet()
+        val xa = x.split(' ').filter { it.length > 1 }.toSet(); val ya = y.split(' ').filter { it.length > 1 }.toSet()
         val token = if (xa.isEmpty() || ya.isEmpty()) 0.0 else xa.intersect(ya).size.toDouble() / max(xa.size, ya.size)
         val edit = 1.0 - levenshtein(x, y).toDouble() / max(x.length, y.length).coerceAtLeast(1)
         return (token * 0.7 + edit * 0.3).coerceIn(0.0, 1.0)
@@ -399,24 +395,20 @@ private class SofascoreFallbackClient {
         .replace(Regex("\\p{M}+"), "")
         .replace(Regex("\\b(fc|cf|sc|ac|afc|club|de|the)\\b"), " ")
         .replace(Regex("[^a-z0-9 ]"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
+        .replace(Regex("\\s+"), " ").trim()
 
     private fun levenshtein(a: String, b: String): Int {
         if (a == b) return 0
         if (a.isEmpty()) return b.length
         if (b.isEmpty()) return a.length
-        var prev = IntArray(b.length + 1) { it }
-        var cur = IntArray(b.length + 1)
+        var prev = IntArray(b.length + 1) { it }; var cur = IntArray(b.length + 1)
         for (i in a.indices) {
             cur[0] = i + 1
             for (j in b.indices) {
                 val cost = if (a[i] == b[j]) 0 else 1
                 cur[j + 1] = minOf(cur[j] + 1, prev[j + 1] + 1, prev[j] + cost)
             }
-            val tmp = prev
-            prev = cur
-            cur = tmp
+            val tmp = prev; prev = cur; cur = tmp
         }
         return prev[b.length]
     }

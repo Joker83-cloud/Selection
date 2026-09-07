@@ -167,6 +167,38 @@ private class SofascoreFallbackClient {
         similarity(canonical(c.away), canonical(opponentName(c, e)))
 
     private fun findTeam(expected: String): TeamHit? {
+        findTeamLegacy(expected)?.let { return it }
+        return findTeamEnhanced(expected)
+    }
+
+    private fun findTeamLegacy(expected: String): TeamHit? {
+        val q = URLEncoder.encode(expected, "UTF-8")
+        val json = runCatching { JSONObject(fetch("$base/search/all?q=$q")) }.getOrNull() ?: return null
+        val results = json.optJSONArray("results") ?: return null
+        var best: TeamHit? = null
+        var bestScore = 0.0
+
+        for (i in 0 until results.length()) {
+            val item = results.optJSONObject(i) ?: continue
+            val type = item.optString("type", "")
+            val entity = item.optJSONObject("entity") ?: item.optJSONObject("team") ?: continue
+            val name = entity.optString("name", "").trim()
+            val id = entity.optInt("id", 0)
+            if (name.isBlank() || id <= 0) continue
+            if (type.isNotBlank() && !type.equals("team", true)) continue
+            if (!categoryCompatible(expected, name)) continue
+            val sport = entity.optJSONObject("sport")?.optString("name", "") ?: ""
+            if (sport.isNotBlank() && !sport.equals("football", true) && !sport.equals("calcio", true)) continue
+            val score = similarity(expected, name)
+            if (score > bestScore) {
+                bestScore = score
+                best = TeamHit(id, name)
+            }
+        }
+        return best?.takeIf { bestScore >= 0.68 }
+    }
+
+    private fun findTeamEnhanced(expected: String): TeamHit? {
         val queries = linkedSetOf(expected, canonical(expected), alias(expected)).filter { it.isNotBlank() }
         var best: TeamHit? = null
         var bestScore = 0.0
@@ -330,7 +362,7 @@ private class SofascoreFallbackClient {
         conn.connectTimeout = 10000
         conn.readTimeout = 10000
         conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/1.5")
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) OneStakeSelectionAI/1.6")
         conn.setRequestProperty("Accept", "application/json")
         try {
             val code = conn.responseCode
